@@ -21,6 +21,8 @@ mod admin_resume_escrow_footprint_tests;
 mod admin_tax_withholding_guards_tests;
 #[path = "arbitration_split_event_tests.rs"]
 mod arbitration_split_event_tests;
+#[path = "dispute_resolution_branch_tests.rs"]
+mod dispute_resolution_branch_tests;
 #[path = "emergency_pause_split_refund_tests.rs"]
 mod emergency_pause_split_refund_tests;
 #[path = "execute_admin_transfer_tests.rs"]
