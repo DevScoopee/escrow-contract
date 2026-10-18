@@ -7,6 +7,10 @@
 // permanently locked. The closure boundary is what makes the release
 // unconditional, so the lint is disabled here deliberately.
 #![allow(clippy::redundant_closure_call)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
     ContractExecutable, Env, Symbol, Vec,
@@ -2789,7 +2793,7 @@ impl MilestoneEscrow {
         if let Some(index) = whitelist.iter().position(|t| t == token) {
             let last = whitelist.len() - 1;
             if (index as u32) != last {
-                let last_elem = whitelist.get(last).unwrap();
+                let last_elem = whitelist.get(last).ok_or(Error::TokenNotWhitelisted)?;
                 whitelist.set(index as u32, last_elem);
             }
             whitelist.pop_back();
@@ -3202,20 +3206,18 @@ impl MilestoneEscrow {
     ///   - The deadline calculation overflows (deadline too far in future).
     ///   - The timestamp conversion to i64 fails.
     ///   - The subtraction overflows (current > deadline, rare in i64).
-    ///
-    /// A missing milestone or missing job metadata is not reported as a typed
-    /// `Error`: the call traps, and the host surfaces that to the caller as a
-    /// failed invocation.
+    ///   - The job metadata is missing (`NotInitialized`).
+    ///   - The milestone is missing (`InvalidMilestone`).
     ///
     /// # Behavior in Edge Cases
     ///
-    /// - Empty state (no milestone): the call traps (see above).
+    /// - Empty state (no milestone): Returns `InvalidMilestone`.
     /// - Boundary state (large extensions/timestamps): Returns error on overflow.
     /// - Expired milestone: Returns 0 or negative value (seconds past deadline).
     /// - Just-delivered (delivered_at = current): Returns approximately `auto_release_seconds + extension_seconds`.
     pub fn time_until_auto_release(env: Env, milestone_index: u32) -> Result<i64, Error> {
-        let meta = Self::load_job_meta(&env).unwrap();
-        let milestone = Self::load_milestone(&env, milestone_index).unwrap();
+        let meta = Self::load_job_meta(&env)?;
+        let milestone = Self::load_milestone(&env, milestone_index)?;
         // Read delivery timestamp from temporary storage (optimised path) and
         // fall back to the persistent Milestone field for pre-migration entries.
         let delivered_at =
@@ -5701,7 +5703,9 @@ impl MilestoneEscrow {
         while i < count {
             let mut j = i + 1;
             while j < count {
-                if signers.get(i).unwrap() == signers.get(j).unwrap() {
+                let a = signers.get(i).ok_or(Error::MultiSigNoSigners)?;
+                let b = signers.get(j).ok_or(Error::MultiSigNoSigners)?;
+                if a == b {
                     return Err(Error::MultiSigDuplicateSigner);
                 }
                 j += 1;
@@ -5801,7 +5805,7 @@ impl MilestoneEscrow {
             .storage()
             .instance()
             .get(&DataKey::MultiSigConfig)
-            .expect("MultiSigConfig was written above");
+            .ok_or(Error::NotInitialized)?;
 
         env.events().publish(
             (symbol_short!("msiginit"),),
