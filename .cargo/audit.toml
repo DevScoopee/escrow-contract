@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # paste 1.0.15 is unmaintained (no known vulnerability). It is a
+    # build-time proc-macro pulled in transitively by soroban-sdk via ark-ff
+    # and wasmi_core; no compatible maintained release exists to update to.
+    "RUSTSEC-2024-0436",
+]
