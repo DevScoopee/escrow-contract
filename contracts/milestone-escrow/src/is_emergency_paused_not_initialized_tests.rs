@@ -68,6 +68,7 @@ fn setup_initialized_escrow(env: &Env) -> (Address, Address, Address, Address, A
         &token_contract_id,
         &604800,
         &vec![env, 1_000_i128],
+        &0u32,
     );
 
     (
@@ -214,6 +215,7 @@ fn test_is_emergency_paused_still_not_initialized_after_rejected_initialize() {
         &token_contract_id,
         &604800,
         &vec![&env],
+        &0u32,
     );
     assert_eq!(rejected, Err(Ok(Error::InvalidAmount)));
 
@@ -248,6 +250,7 @@ fn test_is_emergency_paused_not_initialized_is_scoped_per_contract_instance() {
             .address(),
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(initialized.try_is_emergency_paused(), Ok(Ok(false)));
 

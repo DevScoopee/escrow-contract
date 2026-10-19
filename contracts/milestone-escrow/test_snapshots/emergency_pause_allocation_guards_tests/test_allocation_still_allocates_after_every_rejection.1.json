@@ -81,6 +81,9 @@
                       "i128": "1000"
                     }
                   ]
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -228,6 +231,9 @@
                       "i128": "1000"
                     }
                   ]
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -655,6 +661,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "arbiter_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "auto_release_seconds"
                             },
                             "val": {
@@ -1005,6 +1019,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVAX5"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "arbiter_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
                             }
                           },
                           {

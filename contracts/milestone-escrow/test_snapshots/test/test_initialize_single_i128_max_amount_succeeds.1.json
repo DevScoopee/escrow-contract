@@ -59,6 +59,9 @@
                       "i128": "170141183460469231731687303715884105727"
                     }
                   ]
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -282,6 +285,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "arbiter_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
                             }
                           },
                           {
@@ -581,6 +592,14 @@
                   },
                   "val": {
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "arbiter_fee_bps"
+                  },
+                  "val": {
+                    "u32": 0
                   }
                 },
                 {

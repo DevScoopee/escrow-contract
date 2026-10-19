@@ -80,6 +80,7 @@ fn test_load_helper_returns_default_after_initialize() {
         &token_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let alloc = client.get_platform_fee_allocation();

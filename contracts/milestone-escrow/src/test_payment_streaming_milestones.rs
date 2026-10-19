@@ -57,6 +57,7 @@ fn calculator_only(env: &Env) -> MilestoneEscrowClient<'_> {
         &token_addr,
         &604_800u64,
         &amounts,
+        &0u32,
     );
     escrow
 }
@@ -118,6 +119,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
         &token_contract_id,
         &604_800u64,
         &amounts,
+        &0u32,
     );
 
     (
@@ -706,6 +708,7 @@ fn test_payment_streaming_lock_blocks_fund() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     env.as_contract(&contract_id, || {

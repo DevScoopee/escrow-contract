@@ -55,6 +55,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address, Address
         &token_contract_id,
         &604_800u64,
         &amounts,
+        &0u32,
     );
 
     // Fund the contract so pause-gated refund settlements (which reject an
@@ -448,6 +449,7 @@ fn test_claim_refund_rejects_an_empty_contract_balance() {
         &token_contract_id,
         &604_800u64,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     escrow.emergency_pause(&client_addr, &freelancer_addr);
 

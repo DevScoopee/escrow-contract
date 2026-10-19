@@ -59,6 +59,7 @@ fn initialised_escrow(env: &Env) -> Consent<'_> {
         &token,
         &604_800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
 
     Consent {

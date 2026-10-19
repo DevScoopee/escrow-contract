@@ -49,6 +49,7 @@ fn initialized_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>) {
         &token_contract_id,
         &604_800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
 
     (contract_id, escrow)

@@ -17,6 +17,10 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 
 `initialize` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
+## Arbiter Fee
+
+`initialize` accepts an optional `arbiter_fee_bps` parameter (basis points, max 1,000 = 10 %). When set to a non-zero value, the specified percentage of the disputed milestone balance is transferred to the arbiter on `resolve_dispute` or `apply_dispute_arbitration_split` before the remainder is split between the client and freelancer. Setting it to `0` disables the fee entirely and preserves the pre-#738 behaviour. The fee is agreed by both parties at escrow creation and cannot be changed afterwards.
+
 ## Contract Functions
 
 | Function | Caller | Description |
@@ -66,6 +70,7 @@ cargo test -p milestone-escrow
 - Contract implementation completed in `contracts/milestone-escrow`
 - Includes milestone delivery, approval, dispute, and arbitration flows
 - Initialize now rejects empty milestone lists, zero/negative amounts, zero addresses, zero auto-release windows, and **party collisions** (`admin == client`, `admin == freelancer`, `arbiter == client`, `arbiter == freelancer`, `client == freelancer`) with explicit contract errors
+- `initialize` accepts an optional `arbiter_fee_bps` (0–1,000 bps = 0–10 %) that is deducted from the disputed balance on `resolve_dispute` and `apply_dispute_arbitration_split` before the remainder is split; `0` preserves the original behaviour (#738)
 - `raise_dispute` now performs zero-address check, `require_auth`, and identity validation **before** writing the re-entrancy lock (issue #566), matching the authorization pattern used by `fund`, `approve_milestone`, and `resolve_dispute`; includes the five precondition guard assertions present in all other mutating functions
 - `lock_escrow_interest_yield` now rejects unauthorized callers with `Unauthorized` and an illegal source state with `InvalidStatus` **before** it reads or writes the ledger entry (issue #464); authorization runs first via `require_admin_from_instance`, so a non-admin cannot probe whether an escrow is locked, and an already-locked configuration is refused rather than silently re-locked
 - Contract tests and snapshots are provided under `contracts/milestone-escrow/test_snapshots`

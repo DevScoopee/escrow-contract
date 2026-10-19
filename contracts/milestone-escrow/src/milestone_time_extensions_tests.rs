@@ -250,6 +250,7 @@ fn test_milestone_time_extensions_lock_blocks_fund() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     env.as_contract(&contract_id, || {
