@@ -71,6 +71,8 @@ mod set_escrow_interest_yield_guards_tests;
 mod split_refund_net_distribution_tests;
 #[path = "tax_withholding_tests.rs"]
 mod tax_withholding_tests;
+#[path = "upgrade_wasm_tests.rs"]
+mod upgrade_wasm_tests;
 #[path = "version_tests.rs"]
 mod version_tests;
 
