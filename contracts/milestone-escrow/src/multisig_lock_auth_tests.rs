@@ -1,30 +1,15 @@
 #![cfg(test)]
 //! Tests for `multisig_lock` authorization and precondition guards (#458)
 
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
+/// Initialized (unfunded) escrow with all auths mocked.
 fn setup(env: &Env) -> (Address, MilestoneEscrowClient<'_>, Address) {
     env.mock_all_auths();
-    let admin = Address::generate(env);
-    let client = Address::generate(env);
-    let freelancer = Address::generate(env);
-    let arbiter = Address::generate(env);
-    let token = env
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let escrow = MilestoneEscrowClient::new(env, &contract_id);
-    escrow.initialize(
-        &admin,
-        &client,
-        &freelancer,
-        &arbiter,
-        &token,
-        &604800u64,
-        &soroban_sdk::vec![env, 1_000_i128],
-    );
-    (contract_id, escrow, admin)
+    let fx = EscrowFixture::new(env).build();
+    (fx.contract_id, fx.escrow, fx.admin)
 }
 
 #[test]

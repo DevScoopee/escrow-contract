@@ -4,15 +4,14 @@
 //! Validates that unauthorized caller and illegal source state (locked allocation)
 //! each return their specific typed error and that no storage entry is mutated.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error, MilestoneEscrowClient, PlatformFeeAllocation};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup(env: &Env) -> (Address, MilestoneEscrowClient<'_>, Address) {
     env.mock_all_auths();
-    let amounts = vec![env, 1_000_i128];
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup_funded_escrow(env, amounts);
-    (contract_id, escrow, admin_addr)
+    let fx = EscrowFixture::new(env).funded().build();
+    (fx.contract_id, fx.escrow, fx.admin)
 }
 
 fn read_allocation(env: &Env, contract_id: &Address) -> PlatformFeeAllocation {

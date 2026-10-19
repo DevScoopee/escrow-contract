@@ -4,11 +4,9 @@
 //! Validates that the emitted event fields reconcile exactly with persisted state
 //! and that no event is emitted on the failure path.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{Error, EscrowInterestYieldUnlockedEvent};
-use soroban_sdk::{
-    symbol_short, testutils::Address as _, vec, Address, Env, FromVal, IntoVal, Val,
-};
+use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, FromVal, IntoVal, Val};
 
 fn event_count(env: &Env, topic: &str) -> u32 {
     let topic_val: Val = match topic {
@@ -30,7 +28,8 @@ fn event_count(env: &Env, topic: &str) -> u32 {
 fn unlock_emits_event_and_reconciles_with_persisted_state() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
     // set initial yield config
     client.set_escrow_interest_yield(&admin_addr, &3000_u32, &7000_u32);
     client.lock_escrow_interest_yield(&admin_addr);
@@ -66,7 +65,8 @@ fn unlock_emits_event_and_reconciles_with_persisted_state() {
 fn unlock_failure_emits_no_event_and_does_not_mutate() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
     client.set_escrow_interest_yield(&admin_addr, &4000_u32, &6000_u32);
     // not locked, so unlock should fail
     assert!(!client.is_escrow_interest_yield_locked());
@@ -89,7 +89,8 @@ fn unlock_failure_emits_no_event_and_does_not_mutate() {
 fn unlock_unauthorized_emits_no_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
     client.set_escrow_interest_yield(&admin_addr, &5000_u32, &5000_u32);
     client.lock_escrow_interest_yield(&admin_addr);
     let attacker = Address::generate(&env);

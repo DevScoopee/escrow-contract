@@ -162,7 +162,8 @@ fn deadline_extensions_accumulate_and_emit_new_total() {
     assert_eq!(event.new_extension, 350);
     assert_eq!(event.new_deadline, expected_deadline);
 
-    env.ledger().with_mut(|ledger| ledger.timestamp = event.new_deadline - 1);
+    env.ledger()
+        .with_mut(|ledger| ledger.timestamp = event.new_deadline - 1);
     assert_eq!(
         escrow.try_claim_auto_release(&freelancer_addr, &0),
         Err(Ok(Error::DeadlineNotPassed))

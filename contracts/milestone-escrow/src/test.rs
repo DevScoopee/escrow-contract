@@ -221,6 +221,11 @@ impl ReentrantToken {
     }
 }
 
+/// Tuple-returning shim over [`crate::testutils::EscrowFixture`], kept so the
+/// existing callers keep compiling while they move to the builder (#743).
+/// Prefer `EscrowFixture` in new tests.
+///
+/// Returns `(client, freelancer, arbiter, admin, token, contract_id, escrow)`.
 pub(crate) fn setup_funded_escrow(
     env: &Env,
     milestone_amounts: soroban_sdk::Vec<i128>,
@@ -233,40 +238,19 @@ pub(crate) fn setup_funded_escrow(
     soroban_sdk::Address,
     MilestoneEscrowClient<'_>,
 ) {
-    let client_addr = Address::generate(env);
-    let freelancer_addr = Address::generate(env);
-    let arbiter_addr = Address::generate(env);
-    let admin_addr = Address::generate(env);
-
-    let token_contract_id = env
-        .register_stellar_asset_contract_v2(admin_addr.clone())
-        .address();
-    let token_admin = token::StellarAssetClient::new(env, &token_contract_id);
-    let total: i128 = milestone_amounts.iter().sum();
-    token_admin.mint(&client_addr, &total);
-
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(env, &contract_id);
-
-    client.initialize(
-        &admin_addr,
-        &client_addr,
-        &freelancer_addr,
-        &arbiter_addr,
-        &token_contract_id,
-        &604800,
-        &milestone_amounts,
-    );
-    client.fund(&client_addr);
-
+    let amounts: std::vec::Vec<i128> = milestone_amounts.iter().collect();
+    let fx = crate::testutils::EscrowFixture::new(env)
+        .milestones(&amounts)
+        .funded()
+        .build();
     (
-        client_addr,
-        freelancer_addr,
-        arbiter_addr,
-        admin_addr,
-        token_contract_id,
-        contract_id,
-        client,
+        fx.client,
+        fx.freelancer,
+        fx.arbiter,
+        fx.admin,
+        fx.token,
+        fx.contract_id,
+        fx.escrow,
     )
 }
 
@@ -1350,9 +1334,6 @@ fn test_resolve_dispute_emits_structured_event() {
                         contract_id: contract_id.clone(),
                         milestone_index: 0,
                         arbiter: arbiter_addr.clone(),
-                        client: client_addr.clone(),
-                        freelancer: freelancer_addr.clone(),
-                        token: token_contract_id.clone(),
                         amount: 1_000,
                         paid_amount: 1_000,
                         released_to_freelancer: true,
@@ -1549,13 +1530,7 @@ fn test_fund_emits_structured_event() {
                     FundedEvent {
                         contract_id: contract_id.clone(),
                         client: client_addr.clone(),
-                        freelancer: freelancer_addr.clone(),
-                        arbiter: arbiter_addr.clone(),
-                        token: token_contract_id.clone(),
                         total_amount: 3_000,
-                        milestone_count: 2,
-                        auto_release_seconds: 604800,
-                        funded: true,
                     }
                 );
             }

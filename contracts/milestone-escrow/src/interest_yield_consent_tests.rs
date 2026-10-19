@@ -6,10 +6,10 @@
 //! have signed the same transaction. It had no coverage on main.
 
 use super::*;
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{Error, EscrowInterestYieldConsentSetEvent};
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{symbol_short, vec, Address, Env, FromVal, IntoVal, Val};
+use soroban_sdk::{symbol_short, Address, Env, FromVal, IntoVal, Val};
 
 fn yldcons_event_count(env: &Env) -> u32 {
     let topic_val: Val = symbol_short!("yldcons").into_val(env);
@@ -29,8 +29,9 @@ fn test_escrow_interest_yield_consent_both_sign_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, admin_addr, client) =
+        (fx.client, fx.freelancer, fx.admin, fx.escrow);
 
     client.set_interest_yield_consent(&admin_addr, &6_000u32, &4_000u32);
 
@@ -55,7 +56,8 @@ fn test_escrow_interest_yield_consent_invalid_ratio_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     // Shares must sum to exactly BPS_SCALE (10_000).
     assert_eq!(
@@ -76,7 +78,8 @@ fn test_escrow_interest_yield_consent_boundary_shares_succeed() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     // All-to-one-party is a valid ratio; only the sum is constrained.
     client.set_interest_yield_consent(&admin_addr, &10_000u32, &0u32);
@@ -90,8 +93,9 @@ fn test_escrow_interest_yield_consent_non_admin_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, arbiter_addr, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, arbiter_addr, client) =
+        (fx.client, fx.freelancer, fx.arbiter, fx.escrow);
 
     for caller in [&client_addr, &freelancer_addr, &arbiter_addr] {
         assert_eq!(
@@ -106,7 +110,8 @@ fn test_escrow_interest_yield_consent_respects_lock() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.set_interest_yield_consent(&admin_addr, &5_000u32, &5_000u32);
     client.lock_escrow_interest_yield(&admin_addr);
@@ -127,7 +132,8 @@ fn test_escrow_interest_yield_consent_unlock_allows_update() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.set_interest_yield_consent(&admin_addr, &5_000u32, &5_000u32);
     client.lock_escrow_interest_yield(&admin_addr);
@@ -159,7 +165,8 @@ fn test_unlock_escrow_interest_yield_unauthorized_no_mutation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.set_interest_yield_consent(&admin_addr, &5_000u32, &5_000u32);
     client.lock_escrow_interest_yield(&admin_addr);
@@ -179,7 +186,8 @@ fn test_unlock_escrow_interest_yield_illegal_source_state_no_mutation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.set_interest_yield_consent(&admin_addr, &5_000u32, &5_000u32);
     assert!(!client.is_escrow_interest_yield_locked());

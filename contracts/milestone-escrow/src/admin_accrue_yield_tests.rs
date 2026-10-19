@@ -7,10 +7,10 @@
 //! guard that silently stopped rejecting bad input would inflate payouts.
 
 use super::*;
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{Error, YieldAccruedEvent};
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{symbol_short, vec, Address, Env, FromVal, IntoVal, Val};
+use soroban_sdk::{symbol_short, Address, Env, FromVal, IntoVal, Val};
 
 /// Running `YieldAccrued` total, via the public getter.
 fn accrued(client: &MilestoneEscrowClient<'_>) -> i128 {
@@ -35,7 +35,8 @@ fn test_admin_accrue_yield_happy_path() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     assert_eq!(accrued(&client), 0);
 
@@ -59,8 +60,11 @@ fn test_admin_accrue_yield_accumulates_across_calls() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1_000_i128, 2_000_i128])
+        .funded()
+        .build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.admin_accrue_yield(&admin_addr, &0u32, &100_i128);
     client.admin_accrue_yield(&admin_addr, &1u32, &50_i128);
@@ -74,8 +78,8 @@ fn test_admin_accrue_yield_non_admin_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, client) = (fx.client, fx.freelancer, fx.escrow);
 
     assert_eq!(
         client.try_admin_accrue_yield(&client_addr, &0u32, &100_i128),
@@ -94,7 +98,8 @@ fn test_admin_accrue_yield_invalid_milestone_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     // Only index 0 exists.
     assert_eq!(
@@ -109,7 +114,8 @@ fn test_admin_accrue_yield_rejects_non_positive_amounts() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     assert_eq!(
         client.try_admin_accrue_yield(&admin_addr, &0u32, &0_i128),
@@ -129,7 +135,8 @@ fn test_admin_accrue_yield_overflow_is_rejected_not_wrapped() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin_addr, client) = (fx.admin, fx.escrow);
 
     client.admin_accrue_yield(&admin_addr, &0u32, &i128::MAX);
     assert_eq!(accrued(&client), i128::MAX);
