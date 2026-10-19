@@ -3,7 +3,7 @@
 //! configuration is frozen, returning `NotInitialized` until a configuration
 //! has been written.
 
-use crate::test::setup_funded_escrow;
+use crate::test::setup_unfunded_escrow;
 use crate::{Error, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::{vec, Env};
 
@@ -23,7 +23,7 @@ fn uninitialized_contract_returns_not_initialized() {
 fn missing_configuration_returns_not_initialized() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, _, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, _, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     assert_eq!(
         client.try_is_escrow_interest_yield_locked(),
@@ -35,7 +35,7 @@ fn missing_configuration_returns_not_initialized() {
 fn reports_the_lock_flag_through_lock_and_unlock() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     client.set_escrow_interest_yield(&admin, &5_000, &5_000);
     assert!(!client.is_escrow_interest_yield_locked());
@@ -51,7 +51,7 @@ fn reports_the_lock_flag_through_lock_and_unlock() {
 fn read_mutates_no_ledger_entry_and_publishes_no_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin, &5_000, &5_000);
     client.lock_escrow_interest_yield(&admin);
 

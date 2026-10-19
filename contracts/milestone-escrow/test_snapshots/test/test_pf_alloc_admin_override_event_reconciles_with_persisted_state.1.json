@@ -370,6 +370,91 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "PlatformFeeAllocation"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "client_bps"
+                    },
+                    "val": {
+                      "u32": 1500
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "freelancer_bps"
+                    },
+                    "val": {
+                      "u32": 7500
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "locked"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "treasury_bps"
+                    },
+                    "val": {
+                      "u32": 1000
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "WhitelistedTokens"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "vec": [
+                  {
+                    "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -483,51 +568,6 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "PlatformFeeAllocation"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "client_bps"
-                            },
-                            "val": {
-                              "u32": 1500
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "freelancer_bps"
-                            },
-                            "val": {
-                              "u32": 7500
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "locked"
-                            },
-                            "val": {
-                              "bool": false
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "treasury_bps"
-                            },
-                            "val": {
-                              "u32": 1000
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "PlatformFeeAllocationLock"
                           }
                         ]
@@ -546,22 +586,6 @@
                       },
                       "val": {
                         "u32": 1
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "WhitelistedTokens"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
-                          }
-                        ]
                       }
                     }
                   ]

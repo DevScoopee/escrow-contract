@@ -100,7 +100,7 @@ fn test_interest_yield_split_refund_locked_state_fails_and_no_mutation() {
     };
     env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::InterestYieldState, &state);
     });
 
@@ -112,7 +112,7 @@ fn test_interest_yield_split_refund_locked_state_fails_and_no_mutation() {
     // Verify stored state was untouched
     let stored: EscrowInterestYieldState = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::InterestYieldState)
             .unwrap()
     });
@@ -136,7 +136,7 @@ fn test_interest_yield_split_refund_unlocked_state_succeeds() {
     };
     env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::InterestYieldState, &state);
     });
 

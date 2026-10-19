@@ -36,17 +36,24 @@
 //! keys live in, and are bumped with, the shared `contract_instance` entry), so
 //! there is no per-key TTL work to collapse.
 //!
+//! # Issue #772
+//! The consolidated `MultiSigConfig` has since moved out of the
+//! contract-instance entry into its own persistent key: the instance entry is
+//! loaded by every invocation, and a 32-signer set there made every
+//! `approve_milestone` pay for it. The call still writes exactly one multisig
+//! key, but it no longer grows the instance entry at all.
+//!
 //! # Tests
-//! 1. `test_multisig_approval_init_writes_one_consolidated_key` — counts the
-//!    instance keys the live call adds (1, was 2), pins the consolidated value,
-//!    and proves the metric distinguishes 1 from 2 with a legacy-layout control.
-//! 2. `test_multisig_approval_init_shrinks_instance_entry_bytes` — measures the
-//!    `contract_instance` entry's XDR growth for the real call against the same
-//!    data written in the legacy two-key shape.
+//! 1. `test_multisig_approval_init_writes_one_consolidated_key` — the live call
+//!    adds no instance key (the legacy layout added 2) and writes the single
+//!    consolidated persistent value.
+//! 2. `test_multisig_approval_init_shrinks_instance_entry_bytes` — the
+//!    `contract_instance` entry does not grow, against the same data written in
+//!    the legacy two-key instance shape.
 //! 3. `test_multisig_approval_init_touched_entries_footprint` — meters the
-//!    invocation: three distinct ledger entries (wasm code, auth nonce, and the
-//!    single instance entry), with a control endpoint that still reads the
-//!    persistent `Admin` copy measuring one entry more.
+//!    invocation: four distinct ledger entries (wasm code, auth nonce, the
+//!    instance entry and the persistent `MultiSigConfig`); the persistent
+//!    `Admin` copy is still not among them.
 //! 4. `test_multisig_approval_init_registers_signer_set_and_threshold_identically`
 //!    — behaviour identity through the public API.
 //! 5. `test_multisig_approval_init_rejections_write_no_storage` — every
@@ -187,7 +194,7 @@ fn signer_set(env: &Env) -> Vec<Address> {
 /// The consolidated `MultiSigConfig` persisted by the contract, if any.
 fn stored_config(env: &Env, contract_id: &Address) -> Option<MultiSigConfig> {
     env.as_contract(contract_id, || {
-        env.storage().instance().get(&DataKey::MultiSigConfig)
+        env.storage().persistent().get(&DataKey::MultiSigConfig)
     })
 }
 
@@ -260,10 +267,10 @@ fn test_multisig_approval_init_writes_one_consolidated_key() {
 
     assert_eq!(
         keys_after - keys_before,
-        1,
-        "multisig_approval_init must add exactly one instance-storage key \
-         (the consolidated MultiSigConfig); it used to add two \
-         (MultiSigSigners + MultiSigThreshold)"
+        0,
+        "multisig_approval_init must add no instance-storage key: the \
+         consolidated MultiSigConfig is persistent (issue #772); the legacy \
+         layout added two (MultiSigSigners + MultiSigThreshold)"
     );
 
     // That single added key carries both fields.
@@ -358,24 +365,16 @@ fn test_multisig_approval_init_shrinks_instance_entry_bytes() {
     let legacy_growth = instance_entry_bytes(&env_legacy) - legacy_before;
 
     assert!(
-        consolidated_growth > 0,
-        "sanity: persisting the multisig config must grow the instance entry \
-         (measured {} bytes)",
-        consolidated_growth
-    );
-    assert!(
-        consolidated_growth < legacy_growth,
-        "the consolidated entry must be smaller than the legacy two-key layout \
-         for the same signer set: consolidated +{} bytes, legacy +{} bytes",
-        consolidated_growth,
+        legacy_growth > 0,
+        "sanity: the legacy layout grows the instance entry (measured {} bytes)",
         legacy_growth
     );
     assert_eq!(
-        legacy_growth - consolidated_growth,
-        28,
-        "measured saving: the removed MultiSigThreshold entry (its encoded \
-         DataKey + its u32 value) is 48 bytes, and the tuple wrapper the \
-         consolidated value adds is 20 bytes — 48 - 20 = 28"
+        consolidated_growth, 0,
+        "the multisig config lives under its own persistent key (issue #772), \
+         so the instance entry every call loads must not grow at all; the \
+         legacy layout grew it by {} bytes",
+        legacy_growth
     );
 }
 
@@ -384,17 +383,16 @@ fn test_multisig_approval_init_shrinks_instance_entry_bytes() {
 /// Metered proof that the call no longer touches the persistent `Admin` entry.
 ///
 /// `env.cost_estimate().resources()` reports the ledger entries touched by the
-/// last invocation.  After this change a successful `multisig_approval_init`
-/// touches three: the wasm code entry, the auth nonce entry, and the single
-/// `contract_instance` entry that holds *all* of its storage state (the instance
-/// `Admin` copy and the consolidated `MultiSigConfig`).  The fourth entry it
-/// used to touch — the persistent `Admin` copy read by `require_admin` — is
-/// gone, which is why setup A below seeds no persistent `Admin` at all.
+/// last invocation.  A successful `multisig_approval_init` touches four: the
+/// wasm code entry, the auth nonce entry, the `contract_instance` entry (which
+/// holds the instance `Admin` copy) and the persistent `MultiSigConfig`, which
+/// moved out of the instance entry in issue #772.  The persistent `Admin` copy
+/// read by `require_admin` is not among them, which is why setup A below seeds
+/// no persistent `Admin` at all.
 ///
-/// The control shows the metric tells three from four: a second, identically
-/// prepared env calls `admin_pause_escrow`, which still authorises against the
-/// persistent `Admin` copy (its own storage layout is outside this issue's
-/// scope) and therefore measures exactly one distinct entry more.
+/// Control: a second, identically prepared env calls `admin_pause_escrow`,
+/// which authorises against the persistent `Admin` copy and touches no
+/// multisig key, so it measures the same number of entries.
 #[test]
 fn test_multisig_approval_init_touched_entries_footprint() {
     let env = test_env();
@@ -409,16 +407,17 @@ fn test_multisig_approval_init_touched_entries_footprint() {
     let init = env.cost_estimate().resources();
 
     assert_eq!(
-        init.memory_read_entries, 3,
-        "multisig_approval_init must touch exactly three distinct ledger entries \
-         (contract_code + auth nonce + contract_instance); the persistent Admin \
-         entry must no longer be among them; measured {:?}",
+        init.memory_read_entries, 4,
+        "multisig_approval_init must touch exactly four distinct ledger entries \
+         (contract_code + auth nonce + contract_instance + the persistent \
+         MultiSigConfig); the persistent Admin entry must not be among them; \
+         measured {:?}",
         init
     );
     assert_eq!(
         init.write_entries, 2,
-        "the only ledger entries written are the contract-instance entry and the \
-         auth nonce; measured {:?}",
+        "the only ledger entries written are the persistent MultiSigConfig and \
+         the auth nonce; the instance entry is left untouched; measured {:?}",
         init
     );
     assert_eq!(
@@ -447,14 +446,15 @@ fn test_multisig_approval_init_touched_entries_footprint() {
     escrow_b.admin_pause_escrow(&admin_b);
     let pause = env_b.cost_estimate().resources();
 
+    // Since issue #772 multisig_approval_init touches the persistent
+    // MultiSigConfig in place of the persistent Admin, so the two calls now
+    // touch the same number of distinct entries.
     assert_eq!(
-        pause.memory_read_entries,
-        init.memory_read_entries + 1,
-        "control: admin_pause_escrow additionally reads the persistent Admin \
-         copy — one distinct ledger entry more than multisig_approval_init; \
+        pause.memory_read_entries, init.memory_read_entries,
+        "control: admin_pause_escrow reads the persistent Admin copy where \
+         multisig_approval_init reads the persistent MultiSigConfig; \
          measured pause {:?}, init {:?}",
-        pause,
-        init
+        pause, init
     );
 }
 

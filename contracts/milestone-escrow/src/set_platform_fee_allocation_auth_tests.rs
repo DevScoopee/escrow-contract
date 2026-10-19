@@ -18,7 +18,7 @@ fn setup(env: &Env) -> (Address, MilestoneEscrowClient<'_>, Address) {
 fn read_allocation(env: &Env, contract_id: &Address) -> PlatformFeeAllocation {
     env.as_contract(contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
             .unwrap()
     })

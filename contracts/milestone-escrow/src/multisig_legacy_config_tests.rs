@@ -79,7 +79,7 @@ fn legacy_layout_cannot_be_reinitialised() {
         Err(Ok(Error::AlreadyInitialized))
     );
     let config: Option<MultiSigConfig> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::MultiSigConfig)
+        env.storage().persistent().get(&DataKey::MultiSigConfig)
     });
     assert_eq!(
         config, None,

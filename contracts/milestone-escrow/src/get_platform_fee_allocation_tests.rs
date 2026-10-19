@@ -47,7 +47,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 fn capture_allocation(env: &Env, contract_id: &Address) -> Option<PlatformFeeAllocation> {
     env.as_contract(contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     })
 }

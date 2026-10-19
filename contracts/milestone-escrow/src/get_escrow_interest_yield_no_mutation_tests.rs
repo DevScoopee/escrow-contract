@@ -28,12 +28,12 @@
 //! `load_interest_yield_state` helper it calls) changes the snapshot and fails
 //! this suite.
 
-use crate::test::setup_funded_escrow;
+use crate::test::setup_unfunded_escrow;
 use crate::{Error, EscrowInterestYieldState, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::testutils::storage::{Instance, Persistent, Temporary};
 use soroban_sdk::{vec, Address, Env, Map, Val};
 
-/// A funded escrow carrying an explicit interest/yield share configuration,
+/// An initialised, unfunded (issue #776) escrow carrying an explicit interest/yield share configuration,
 /// plus the admin that configured it and the escrow's contract address (the
 /// per-tier fingerprint reads the tier of the currently executing contract, so
 /// it needs that id).
@@ -43,7 +43,8 @@ fn escrow_with_interest_yield(
     freelancer_share_bps: u32,
 ) -> (MilestoneEscrowClient<'_>, Address, Address) {
     env.mock_all_auths();
-    let (_, _, _, admin, _, contract_id, escrow) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    let (_, _, _, admin, _, contract_id, escrow) =
+        setup_unfunded_escrow(env, vec![env, 1_000_i128]);
     escrow.set_escrow_interest_yield(&admin, &client_share_bps, &freelancer_share_bps);
     (escrow, admin, contract_id)
 }
@@ -305,7 +306,7 @@ fn get_escrow_interest_yield_needs_no_authorization_and_mutates_nothing() {
 fn get_escrow_interest_yield_without_configuration_returns_not_initialized_without_mutation() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, _, _, _, escrow) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     let before = env.to_ledger_snapshot();
     let result = escrow.try_get_escrow_interest_yield();

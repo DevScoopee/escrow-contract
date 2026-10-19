@@ -92,7 +92,7 @@ fn raw_allocation_keys(
     env.as_contract(contract_id, || {
         (
             env.storage()
-                .instance()
+                .persistent()
                 .get::<_, PlatformFeeAllocation>(&DataKey::PlatformFeeAllocation),
             env.storage()
                 .instance()

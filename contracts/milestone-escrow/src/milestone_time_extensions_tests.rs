@@ -151,18 +151,21 @@ fn deadline_extensions_accumulate_and_emit_new_total() {
 
     escrow.extend_milestone_deadline(&client_addr, &0, &100);
     escrow.extend_milestone_deadline(&client_addr, &0, &250);
+    // Events only cover the most recent invocation, so read them before the
+    // view calls below replace them.
+    let events = crate::all_event_tuples(&env);
+    let event = DeadlineExtendedEvent::from_val(&env, &events.last().unwrap().2);
 
     assert_eq!(escrow.time_until_auto_release(&0), initial + 350);
 
     let job = escrow.get_job();
     let milestone = job.milestones.get(0).unwrap();
-    let events = crate::all_event_tuples(&env);
-    let event = DeadlineExtendedEvent::from_val(&env, &events.last().unwrap().2);
     let expected_deadline = milestone.delivered_at + job.auto_release_seconds + 350;
     assert_eq!(event.new_extension, 350);
     assert_eq!(event.new_deadline, expected_deadline);
 
-    env.ledger().with_mut(|ledger| ledger.timestamp = event.new_deadline - 1);
+    env.ledger()
+        .with_mut(|ledger| ledger.timestamp = event.new_deadline - 1);
     assert_eq!(
         escrow.try_claim_auto_release(&freelancer_addr, &0),
         Err(Ok(Error::DeadlineNotPassed))

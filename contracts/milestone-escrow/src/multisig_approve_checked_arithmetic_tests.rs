@@ -104,7 +104,7 @@ fn funded_multisig_escrow(
 /// which a signer's index does not fit the bitmap.
 fn overwrite_signers(env: &Env, contract_id: &Address, signers: &Vec<Address>) {
     env.as_contract(contract_id, || {
-        let storage = env.storage().instance();
+        let storage = env.storage().persistent();
         let MultiSigConfig(_, threshold) = storage
             .get(&DataKey::MultiSigConfig)
             .expect("multisig_approval_init wrote the config");

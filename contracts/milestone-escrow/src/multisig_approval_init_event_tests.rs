@@ -68,7 +68,7 @@ fn stored_threshold(env: &Env, contract_id: &Address) -> Option<u32> {
 /// `multisig_approval_init` writes: signer set and threshold together.
 fn stored_config(env: &Env, contract_id: &Address) -> Option<MultiSigConfig> {
     env.as_contract(contract_id, || {
-        env.storage().instance().get(&DataKey::MultiSigConfig)
+        env.storage().persistent().get(&DataKey::MultiSigConfig)
     })
 }
 

@@ -182,27 +182,41 @@ fn execute_transfer_swaps_admin_and_emits_event() {
 }
 
 #[test]
-fn execute_transfer_skips_redundant_admin_write_for_same_admin() {
+fn execute_transfer_skips_redundant_admin_write_for_legacy_same_admin_proposal() {
     let env = test_env();
     env.mock_all_auths();
 
-    let (old_admin, s1, s2, _, _, client) = setup_multisig_transfer(&env);
-    // The proposal helper permits a same-admin proposal; execution should
-    // still clear it without rewriting the unchanged Admin entry.
+    let (old_admin, s1, s2, _, contract_id, client) = setup_multisig_transfer(&env);
     client
         .try_cancel_admin_transfer_proposal(&old_admin)
         .unwrap()
         .unwrap();
 
-    let same_admin = old_admin.clone();
-    client.propose_admin_transfer(&old_admin, &same_admin, &2u32);
+    // `propose_admin_transfer` now refuses the current admin (issue #771) ...
+    assert_eq!(
+        client.try_propose_admin_transfer(&old_admin, &old_admin, &2u32),
+        Err(Ok(Error::InvalidAddress))
+    );
+
+    // ... but a same-admin proposal recorded before that check shipped may
+    // still be pending after an upgrade. Seed one directly: execution must
+    // still clear it without rewriting the unchanged Admin entry.
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(
+            &DataKey::PendingAdminTransfer,
+            &crate::PendingAdminTransfer {
+                new_admin: old_admin.clone(),
+                proposal_id: 2,
+            },
+        );
+    });
     client.multisig_approve(&s1, &2u32);
     client.multisig_approve(&s2, &2u32);
 
     assert_eq!(client.try_execute_admin_transfer(), Ok(Ok(())));
     assert_eq!(adminexc_event_count(&env), 1);
     assert_eq!(last_adminexc_event(&env).old_admin, old_admin);
-    assert_eq!(last_adminexc_event(&env).new_admin, same_admin);
+    assert_eq!(last_adminexc_event(&env).new_admin, old_admin);
     assert_eq!(client.get_pending_admin_transfer(), None);
 }
 
@@ -259,9 +273,12 @@ fn assert_instance_admin_gated_endpoints_follow(
         client.try_set_platform_fee_allocation(new_admin, &0, &10_000, &0),
         Ok(Ok(()))
     );
+    // The escrow is funded, so the admin-only yield setter is closed (issue
+    // #776). The new admin still gets past authorization to that guard,
+    // which is what proves the instance admin followed the transfer.
     assert_eq!(
         client.try_set_escrow_interest_yield(new_admin, &5_000, &5_000),
-        Ok(Ok(()))
+        Err(Ok(Error::AlreadyFunded))
     );
     assert_eq!(client.try_multisig_lock(new_admin), Ok(Ok(())));
 }

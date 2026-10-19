@@ -1,7 +1,7 @@
 #![cfg(test)]
 //! Tests for `set_escrow_interest_yield` structured event (#462)
 
-use crate::test::setup_funded_escrow;
+use crate::test::setup_unfunded_escrow;
 use crate::{Error, EscrowInterestYieldSetEvent};
 use soroban_sdk::{
     symbol_short, testutils::Address as _, vec, Address, Env, FromVal, IntoVal, Val,
@@ -24,7 +24,7 @@ fn event_count(env: &Env) -> u32 {
 fn set_yield_emits_event_and_reconciles() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin_addr, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     let before = event_count(&env);
     client.set_escrow_interest_yield(&admin_addr, &3500_u32, &6500_u32);
     let after = event_count(&env);
@@ -45,7 +45,7 @@ fn set_yield_emits_event_and_reconciles() {
 fn set_yield_failure_emits_no_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin_addr, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin_addr, &4000_u32, &6000_u32);
     client.lock_escrow_interest_yield(&admin_addr);
     let before = event_count(&env);
@@ -63,7 +63,7 @@ fn set_yield_failure_emits_no_event() {
 fn set_yield_unauthorized_no_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin_addr, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin_addr, &5000_u32, &5000_u32);
     let attacker = Address::generate(&env);
     let res = client.try_set_escrow_interest_yield(&attacker, &3000_u32, &7000_u32);
@@ -78,7 +78,7 @@ fn set_yield_unauthorized_no_event() {
 fn set_yield_invalid_ratio_no_event() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (_, _, _, admin_addr, _, _, client) = setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     let before = event_count(&env);
     let res = client.try_set_escrow_interest_yield(&admin_addr, &6000_u32, &3000_u32);
     assert_eq!(res, Err(Ok(Error::InvalidRatio)));

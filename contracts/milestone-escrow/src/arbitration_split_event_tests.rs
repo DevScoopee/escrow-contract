@@ -56,6 +56,7 @@ fn disputed_escrow(
 ) {
     let (client_addr, freelancer_addr, arbiter_addr, _admin, _token, contract_id, client) =
         setup_funded_escrow(env, milestone_amounts);
+    client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
     (
         contract_id,
@@ -113,7 +114,8 @@ fn event_reconciles_with_persisted_state_on_partial_split() {
     // Milestone state reconciles with the persisted milestone.
     let ms = client.get_job().milestones.get(0).unwrap();
     assert_eq!(ev.released_amount, ms.released_amount);
-    assert_eq!(ev.released_amount, 6_000);
+    // released_amount tracks only what the freelancer received.
+    assert_eq!(ev.released_amount, 3_000);
     assert_eq!(ev.status, ms.status);
     assert_eq!(ev.status, MilestoneStatus::Split);
     assert_eq!(client.get_reputation(&client_addr), 0);

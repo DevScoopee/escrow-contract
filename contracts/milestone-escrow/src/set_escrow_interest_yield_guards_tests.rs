@@ -49,7 +49,7 @@
 //! rather than only that something did.
 
 use super::*;
-use crate::test::setup_funded_escrow;
+use crate::test::setup_unfunded_escrow;
 use crate::{DataKey, Error, EscrowInterestYieldState};
 // `Address`, `Env`, and the `testutils::{Address as _, Ledger}` traits all
 // arrive from `test.rs` via the glob import above; only `EnvTestConfig` needs
@@ -67,13 +67,14 @@ fn test_env() -> Env {
     })
 }
 
-/// A funded, fully initialised escrow whose interest/yield share configuration is
+/// A fully initialised (not yet funded — see issue #776) escrow whose interest/yield share configuration is
 /// set to an even split and then frozen by `lock_escrow_interest_yield`.
 /// Returns the client, the stored admin, and the contract id (so tests can read
 /// instance storage directly).
 fn escrow_with_locked_config(env: &Env) -> (MilestoneEscrowClient<'_>, Address, Address) {
     env.mock_all_auths();
-    let (_, _, _, admin, _, contract_id, client) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    let (_, _, _, admin, _, contract_id, client) =
+        setup_unfunded_escrow(env, vec![env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin, &5_000_u32, &5_000_u32);
     client.lock_escrow_interest_yield(&admin);
     assert!(
@@ -87,7 +88,7 @@ fn escrow_with_locked_config(env: &Env) -> (MilestoneEscrowClient<'_>, Address, 
 /// bypassing the public getter so assertions are against the ledger itself.
 fn stored_state(env: &Env, contract_id: &Address) -> Option<EscrowInterestYieldState> {
     env.as_contract(contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     })
 }
 
@@ -113,7 +114,7 @@ fn unauthorized_caller_returns_unauthorized_and_mutates_no_ledger_entry() {
     let env = test_env();
     env.mock_all_auths();
     let (client_addr, freelancer_addr, _, admin, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin, &5_000_u32, &5_000_u32);
 
     for outsider in [&client_addr, &freelancer_addr] {
@@ -141,7 +142,7 @@ fn unauthorized_caller_does_not_create_the_configuration() {
     let env = test_env();
     env.mock_all_auths();
     let (client_addr, _, _, _admin, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     assert_eq!(
         stored_state(&env, &contract_id),
@@ -299,7 +300,7 @@ fn invalid_ratio_returns_invalid_ratio_and_mutates_no_ledger_entry() {
     let env = test_env();
     env.mock_all_auths();
     let (_, _, _, admin, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     for (client_bps, freelancer_bps) in [
         (6_000_u32, 5_000_u32), // 11_000: over-shoot
@@ -332,7 +333,7 @@ fn invalid_ratio_from_an_unauthorized_caller_is_reported_as_unauthorized() {
     let env = test_env();
     env.mock_all_auths();
     let (client_addr, _, _, _, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     let before = env.to_ledger_snapshot();
     assert_eq!(
@@ -393,7 +394,7 @@ fn admin_can_create_the_configuration_when_none_exists() {
     let env = test_env();
     env.mock_all_auths();
     let (_, _, _, admin, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     assert_eq!(stored_state(&env, &contract_id), None);
     assert_eq!(
@@ -419,7 +420,7 @@ fn admin_can_replace_an_unlocked_configuration() {
     let env = test_env();
     env.mock_all_auths();
     let (_, _, _, admin, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
     for (client_bps, freelancer_bps) in [
         (5_000_u32, 5_000_u32),

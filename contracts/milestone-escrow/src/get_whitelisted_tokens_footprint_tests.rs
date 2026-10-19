@@ -7,10 +7,11 @@
 //!
 //! The tests pin that two ways:
 //!   - The per-invocation resource metering (`env.cost_estimate().resources()`)
-//!     reports exactly one ledger entry: the single contract-instance entry
-//!     that holds `WhitelistedTokens`.  (The contract is registered natively
-//!     here, so there is no separate contract-code entry to count.)  No
-//!     persistent or temporary entry is touched and nothing is written.
+//!     reports exactly two ledger entries: the contract-instance entry every
+//!     call loads, and the persistent `WhitelistedTokens` entry, which moved
+//!     out of instance storage so that other calls stop paying for it
+//!     (issue #772).  (The contract is registered natively here, so there is
+//!     no separate contract-code entry to count.)  Nothing is written.
 //!   - The returned value is exactly the stored list, in every state, and
 //!     `is_token_whitelisted` agrees with it.
 
@@ -24,12 +25,12 @@ fn env_without_snapshot() -> Env {
     })
 }
 
-/// A contract whose instance holds `whitelist` and nothing else.
+/// A contract whose only stored state is the persistent `whitelist`.
 fn seeded<'a>(env: &'a Env, whitelist: &Vec<Address>) -> MilestoneEscrowClient<'a> {
     let contract_id = env.register(MilestoneEscrow, ());
     env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::WhitelistedTokens, whitelist);
     });
     MilestoneEscrowClient::new(env, &contract_id)
@@ -45,8 +46,8 @@ fn generate(env: &Env, n: u32) -> Vec<Address> {
 
 // ── storage reads per call ───────────────────────────────────────────────────
 
-/// Exactly two distinct ledger entries are read — the wasm code and the
-/// contract-instance entry — and none are written.  The measurement is the
+/// Exactly two distinct ledger entries are read — the contract-instance entry
+/// and the persistent whitelist — and none are written.  The measurement is the
 /// same for a one-entry list and a full fifty-entry list, so the read count
 /// does not grow with the list.
 #[test]
@@ -60,8 +61,8 @@ fn test_get_whitelisted_tokens_reads_one_storage_entry() {
         let resources = env.cost_estimate().resources();
 
         assert_eq!(
-            resources.memory_read_entries, 1,
-            "get_whitelisted_tokens must touch only the instance entry \
+            resources.memory_read_entries, 2,
+            "get_whitelisted_tokens must touch only the instance and whitelist entries \
              (n={n}); measured {resources:?}"
         );
         assert_eq!(resources.write_entries, 0, "a read path writes nothing");
@@ -69,7 +70,7 @@ fn test_get_whitelisted_tokens_reads_one_storage_entry() {
     }
 }
 
-/// The uninitialized path reads the same single entry before returning its
+/// The uninitialized path probes the same two entries before returning its
 /// typed error.
 #[test]
 fn test_get_whitelisted_tokens_uninitialized_reads_one_storage_entry() {
@@ -82,7 +83,7 @@ fn test_get_whitelisted_tokens_uninitialized_reads_one_storage_entry() {
         Err(Ok(Error::NotInitialized))
     );
     let resources = env.cost_estimate().resources();
-    assert_eq!(resources.memory_read_entries, 1);
+    assert_eq!(resources.memory_read_entries, 2);
     assert_eq!(resources.write_entries, 0);
 }
 
@@ -95,7 +96,7 @@ fn test_is_token_whitelisted_reads_one_storage_entry() {
 
     assert!(escrow.is_token_whitelisted(&whitelist.get(1).unwrap()));
     let resources = env.cost_estimate().resources();
-    assert_eq!(resources.memory_read_entries, 1);
+    assert_eq!(resources.memory_read_entries, 2);
     assert_eq!(resources.write_entries, 0);
 }
 

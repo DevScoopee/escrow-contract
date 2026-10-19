@@ -39,6 +39,9 @@ jobs:
       - name: Check for orphaned test snapshots
         run: python3 scripts/check-orphan-snapshots.py
 
+      - name: Check for orphaned test modules
+        run: python3 scripts/check-orphan-test-modules.py
+
       - name: Format check
         run: cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check
 
@@ -50,3 +53,31 @@ jobs:
 
       - name: Build WASM
         run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
+
+  reproducible-wasm:
+    # Builds the release wasm in the pinned container (issue #773) and publishes
+    # it with its SHA-256 for every commit, so a deployed contract's wasm hash
+    # can be traced back to the commit that produced it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reproducible build
+        run: bash scripts/build-reproducible.sh "$GITHUB_SHA"
+
+      - name: Publish hash
+        run: |
+          {
+            echo "### milestone_escrow.wasm"
+            echo
+            echo "| commit | sha256 |"
+            echo "|---|---|"
+            echo "| \`$GITHUB_SHA\` | \`$(cut -d' ' -f1 dist/milestone_escrow.wasm.sha256)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat dist/build-info.json
+
+      - name: Upload wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestone_escrow-wasm-${{ github.sha }}
+          path: dist/

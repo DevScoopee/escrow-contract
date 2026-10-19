@@ -23,7 +23,7 @@
 //! a later call would otherwise clear the buffer).
 
 use super::*;
-use crate::test::setup_funded_escrow;
+use crate::test::setup_unfunded_escrow;
 use crate::{DataKey, Error, EscrowInterestYieldState};
 use soroban_sdk::{symbol_short, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val};
 
@@ -56,11 +56,11 @@ fn last_yldlock_event(env: &Env) -> EscrowInterestYieldLockedEvent {
 /// public getter so the reconciliation assertion is against the ledger.
 fn stored_state(env: &Env, contract_id: &Address) -> Option<EscrowInterestYieldState> {
     env.as_contract(contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     })
 }
 
-/// A funded escrow whose interest/yield config is already set to
+/// An initialised, unfunded (issue #776) escrow whose interest/yield config is already set to
 /// `client_bps` / `freelancer_bps` and left unlocked.
 fn escrow_with_yield_shares(
     env: &Env,
@@ -76,7 +76,7 @@ fn escrow_with_yield_shares(
 ) {
     env.mock_all_auths();
     let (client_addr, freelancer_addr, arbiter_addr, admin_addr, _token, contract_id, client) =
-        setup_funded_escrow(env, vec![env, 1_000_i128]);
+        setup_unfunded_escrow(env, vec![env, 1_000_i128]);
     client.set_escrow_interest_yield(&admin_addr, &client_bps, &freelancer_bps);
     (
         client_addr,
