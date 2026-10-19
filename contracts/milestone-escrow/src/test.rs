@@ -256,6 +256,7 @@ pub(crate) fn setup_funded_escrow(
         &token_contract_id,
         &604800,
         &milestone_amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -346,6 +347,7 @@ fn test_full_happy_path() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     assert_eq!(token.balance(&client_addr), 10_000);
@@ -395,6 +397,7 @@ fn test_dispute_release_to_freelancer() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -433,6 +436,7 @@ fn test_dispute_refund_to_client() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
@@ -470,6 +474,7 @@ fn test_apply_dispute_arbitration_split_transfers_percentages() {
         &token_contract_id,
         &604800u64,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -661,6 +666,7 @@ fn test_double_initialize_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_initialize(
@@ -671,6 +677,7 @@ fn test_double_initialize_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert!(result.is_err());
 }
@@ -701,6 +708,7 @@ fn test_unauthorized_fund_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_fund(&bad_actor);
@@ -734,6 +742,7 @@ fn test_invalid_milestone_index_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -768,6 +777,7 @@ fn test_mark_delivered_zero_address_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -806,6 +816,7 @@ fn test_mark_delivered_invalid_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -853,6 +864,7 @@ fn test_mark_delivered_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -973,6 +985,7 @@ fn test_approve_milestone_zero_account_address_fails() {
         &token_contract_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1011,6 +1024,7 @@ fn test_approve_milestone_zero_contract_address_fails() {
         &token_contract_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1050,6 +1064,7 @@ fn test_approve_milestone_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -1085,6 +1100,7 @@ fn test_approve_milestone_invalid_index_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1123,6 +1139,7 @@ fn test_approve_milestone_zero_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -1155,6 +1172,7 @@ fn test_raise_dispute_unauthorized_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -1189,6 +1207,7 @@ fn test_raise_dispute_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1226,6 +1245,7 @@ fn test_resolve_dispute_unauthorized_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
@@ -1261,6 +1281,7 @@ fn test_resolve_dispute_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -1293,6 +1314,7 @@ fn test_resolve_dispute_reverts_when_contract_balance_is_empty() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1330,6 +1352,7 @@ fn test_resolve_dispute_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1355,6 +1378,7 @@ fn test_resolve_dispute_emits_structured_event() {
                         token: token_contract_id.clone(),
                         amount: 1_000,
                         paid_amount: 1_000,
+                        arbiter_fee_amount: 0,
                         released_to_freelancer: true,
                         status: MilestoneStatus::Released,
                     }
@@ -1395,6 +1419,7 @@ fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -1421,6 +1446,337 @@ fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
         }
     }
     assert_eq!(matched, 1);
+}
+
+// ── Issue #738: optional arbiter compensation ─────────────────────────────
+
+/// resolve_dispute with a 5% fee (500 bps) on 1_000 stroops:
+/// 50 → arbiter, 950 → freelancer (release_to_freelancer = true).
+#[test]
+fn test_resolve_dispute_arbiter_fee_five_percent_to_freelancer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    // 5% arbiter fee = 500 bps
+    client.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &500u32,
+    );
+    client.fund(&client_addr);
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    client.resolve_dispute(&arbiter_addr, &0u32, &true);
+
+    let token = token::Client::new(&env, &token_contract_id);
+    assert_eq!(token.balance(&arbiter_addr), 50,   "arbiter should receive 5% = 50");
+    assert_eq!(token.balance(&freelancer_addr), 950, "freelancer should receive 950");
+    assert_eq!(token.balance(&client_addr), 0,      "client should receive nothing");
+    assert_eq!(token.balance(&contract_id), 0,      "contract should be drained");
+}
+
+/// resolve_dispute with a 5% fee on 1_000 stroops, refunding to client:
+/// 50 → arbiter, 950 → client.
+#[test]
+fn test_resolve_dispute_arbiter_fee_five_percent_to_client() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    client.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &500u32,
+    );
+    client.fund(&client_addr);
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    client.resolve_dispute(&arbiter_addr, &0u32, &false);
+
+    let token = token::Client::new(&env, &token_contract_id);
+    assert_eq!(token.balance(&arbiter_addr), 50,   "arbiter should receive 5% = 50");
+    assert_eq!(token.balance(&client_addr), 950,   "client should be refunded 950");
+    assert_eq!(token.balance(&freelancer_addr), 0, "freelancer should receive nothing");
+    assert_eq!(token.balance(&contract_id), 0,     "contract should be drained");
+}
+
+/// resolve_dispute with 0% fee leaves behaviour unchanged:
+/// 0 → arbiter, 1_000 → freelancer.
+#[test]
+fn test_resolve_dispute_zero_fee_unchanged() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, arbiter_addr, _admin_addr, token_contract_id, contract_id, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    client.resolve_dispute(&arbiter_addr, &0u32, &true);
+
+    let token = token::Client::new(&env, &token_contract_id);
+    assert_eq!(token.balance(&arbiter_addr), 0,       "no fee when arbiter_fee_bps=0");
+    assert_eq!(token.balance(&freelancer_addr), 1_000, "freelancer gets full amount");
+    assert_eq!(token.balance(&contract_id), 0,         "contract should be drained");
+}
+
+/// resolve_dispute with 5% fee emits arbiter_fee_amount in the resolve event.
+#[test]
+fn test_resolve_dispute_fee_included_in_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    client.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &500u32,
+    );
+    client.fund(&client_addr);
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    client.resolve_dispute(&arbiter_addr, &0u32, &true);
+
+    let resolve_topic: Symbol = symbol_short!("resolve");
+    let resolve_topic_val: Val = resolve_topic.into_val(&env);
+    let mut found = false;
+    for event in crate::all_event_tuples(&env).iter() {
+        if let Some(topic) = event.1.get(0) {
+            if topic.get_payload() == resolve_topic_val.get_payload() {
+                let decoded = DisputeResolvedEvent::from_val(&env, &event.2);
+                assert_eq!(decoded.arbiter_fee_amount, 50, "event must report 50 fee");
+                assert_eq!(decoded.paid_amount, 950, "event must report 950 to party");
+                assert_eq!(decoded.amount, 1_000, "amount = full owed amount");
+                found = true;
+            }
+        }
+    }
+    assert!(found, "resolve event must be emitted");
+}
+
+/// apply_dispute_arbitration_split with a 5% fee on 1_000 stroops (50/50 split):
+/// 50 → arbiter, 475 → client, 475 → freelancer.
+#[test]
+fn test_arbsplit_arbiter_fee_five_percent_fifty_fifty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    client.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &500u32,
+    );
+    client.fund(&client_addr);
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+
+    // 50/50 split after 5% fee deducted
+    client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &5_000u32);
+
+    let token = token::Client::new(&env, &token_contract_id);
+    assert_eq!(token.balance(&arbiter_addr), 50,   "arbiter should receive 5% = 50");
+    // 950 remaining, 50/50 split = 475 each
+    assert_eq!(token.balance(&client_addr), 475,   "client refund = 475");
+    assert_eq!(token.balance(&freelancer_addr), 475, "freelancer payout = 475");
+    assert_eq!(token.balance(&contract_id), 0,       "contract should be drained");
+}
+
+/// apply_dispute_arbitration_split with 0% fee leaves behaviour unchanged.
+#[test]
+fn test_arbsplit_zero_fee_unchanged() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, arbiter_addr, _admin, token_contract_id, contract_id, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    // 50/50 split with 0% fee
+    client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &5_000u32);
+
+    let token = token::Client::new(&env, &token_contract_id);
+    assert_eq!(token.balance(&arbiter_addr), 0,    "no fee when arbiter_fee_bps=0");
+    assert_eq!(token.balance(&client_addr), 500,   "client refund = 500");
+    assert_eq!(token.balance(&freelancer_addr), 500, "freelancer payout = 500");
+    assert_eq!(token.balance(&contract_id), 0,       "contract should be drained");
+}
+
+/// apply_dispute_arbitration_split with a 5% fee includes arbiter_fee_amount
+/// in both the resolve and arbsplit events.
+#[test]
+fn test_arbsplit_fee_included_in_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    client.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &500u32,
+    );
+    client.fund(&client_addr);
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+    client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &5_000u32);
+
+    let resolve_topic: Symbol = symbol_short!("resolve");
+    let arbsplit_topic: Symbol = symbol_short!("arbsplit");
+    let resolve_val: Val = resolve_topic.into_val(&env);
+    let arbsplit_val: Val = arbsplit_topic.into_val(&env);
+
+    let mut found_resolve = false;
+    let mut found_arbsplit = false;
+    for event in crate::all_event_tuples(&env).iter() {
+        if let Some(topic) = event.1.get(0) {
+            if topic.get_payload() == resolve_val.get_payload() {
+                let decoded = DisputeResolvedEvent::from_val(&env, &event.2);
+                assert_eq!(decoded.arbiter_fee_amount, 50, "resolve event fee = 50");
+                assert_eq!(decoded.paid_amount, 950, "paid_amount = 950 combined");
+                found_resolve = true;
+            }
+            if topic.get_payload() == arbsplit_val.get_payload() {
+                let decoded = ArbitrationSplitAppliedEvent::from_val(&env, &event.2);
+                assert_eq!(decoded.arbiter_fee_amount, 50, "arbsplit event fee = 50");
+                assert_eq!(decoded.client_refund, 475,     "client refund in event = 475");
+                assert_eq!(decoded.freelancer_payout, 475, "freelancer payout in event = 475");
+                found_arbsplit = true;
+            }
+        }
+    }
+    assert!(found_resolve,  "resolve event must be emitted");
+    assert!(found_arbsplit, "arbsplit event must be emitted");
+}
+
+/// initialize rejects arbiter_fee_bps > 1_000 (> 10%).
+#[test]
+fn test_initialize_rejects_arbiter_fee_above_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+
+    let result = client.try_initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &1_001u32, // 10.01% — above cap
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)), "fee above cap must be rejected");
 }
 
 #[test]
@@ -1463,6 +1819,7 @@ fn test_double_fund_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -1494,6 +1851,7 @@ fn test_fund_reentrancy_guard_blocks_callback_fund() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -1534,6 +1892,7 @@ fn test_fund_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -1591,6 +1950,7 @@ fn test_failed_fund_does_not_emit_fund_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_fund(&wrong_client);
@@ -1661,6 +2021,7 @@ fn test_fund_rejects_wrong_client() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_fund(&wrong_client);
@@ -1693,6 +2054,7 @@ fn test_fund_fails_without_balance() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_fund(&client_addr);
@@ -1734,6 +2096,7 @@ fn test_fund_uses_cached_total_for_many_milestones() {
         &token_contract_id,
         &604800,
         &milestone_amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -1774,6 +2137,7 @@ fn test_fund_rejects_missing_milestone_index() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     env.as_contract(&contract_id, || {
@@ -1815,6 +2179,7 @@ fn test_fund_rejects_zero_milestone_amount() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     env.as_contract(&contract_id, || {
@@ -1864,6 +2229,7 @@ fn test_fund_rejects_negative_milestone_amount() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     env.as_contract(&contract_id, || {
@@ -1913,6 +2279,7 @@ fn test_fund_rejects_empty_milestone_set() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -1942,6 +2309,7 @@ fn test_mark_delivered_before_funded_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_mark_delivered(&freelancer_addr, &0u32);
@@ -1977,6 +2345,7 @@ fn test_admin_add_token() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     assert!(client.is_token_whitelisted(&token1));
@@ -2019,6 +2388,7 @@ fn test_non_admin_add_token_fails() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_add_whitelisted_token(&bad_actor, &token2);
@@ -2054,6 +2424,7 @@ fn test_admin_remove_token() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
     client.add_whitelisted_token(&admin_addr, &token2);
 
@@ -2093,6 +2464,7 @@ fn test_non_admin_remove_token_fails() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
     client.add_whitelisted_token(&admin_addr, &token2);
 
@@ -2126,6 +2498,7 @@ fn test_add_existing_token_fails() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_add_whitelisted_token(&admin_addr, &token1);
@@ -2161,6 +2534,7 @@ fn test_remove_nonexistent_token_fails() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_remove_whitelisted_token(&admin_addr, &token2);
@@ -2217,6 +2591,7 @@ fn test_remove_whitelisted_token_fails_when_invalid_amount() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_remove_whitelisted_token(&admin_addr, &token1);
@@ -2252,6 +2627,7 @@ fn test_partial_release_remaining_balance() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2296,6 +2672,7 @@ fn test_multiple_partial_releases_sum_full() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2341,6 +2718,7 @@ fn test_over_release_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2378,6 +2756,7 @@ fn test_negative_or_zero_release_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2418,6 +2797,7 @@ fn test_approve_partial_large_amounts_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2457,6 +2837,7 @@ fn test_release_on_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -2493,6 +2874,7 @@ fn test_approve_partial_wrong_status_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -2537,6 +2919,7 @@ fn test_approve_partial_invalid_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2572,6 +2955,7 @@ fn test_approve_partial_before_funded_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_approve_partial(&client_addr, &0u32, &4000_i128);
@@ -2606,6 +2990,7 @@ fn test_approve_partial_unauthorized_partial_release_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2642,6 +3027,7 @@ fn test_approve_partial_arbiter_is_unauthorized() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2678,6 +3064,7 @@ fn test_approve_partial_zero_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2714,6 +3101,7 @@ fn test_approve_partial_negative_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2754,6 +3142,7 @@ fn test_whitelist_state_transitions() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     assert!(client.is_token_whitelisted(&token1));
@@ -2859,6 +3248,7 @@ fn test_approve_partial_on_disputed_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2896,6 +3286,7 @@ fn test_approve_partial_on_refunded_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -3283,6 +3674,7 @@ fn test_admin_override_refund_not_funded_fails() {
         &token_contract_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     // Deliberately skip fund().
 
@@ -3774,6 +4166,7 @@ fn test_multisig_admin_override_release_not_funded_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.multisig_lock(&admin_addr);
@@ -3811,6 +4204,7 @@ fn test_claim_auto_release_disputed_status_fails() {
         &token_contract_id,
         &100,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -3853,6 +4247,7 @@ fn test_time_until_auto_release() {
         &token_contract_id,
         &100,
         &amounts,
+        &0u32,
     );
 
     client.fund(&client_addr);
@@ -3906,6 +4301,7 @@ fn test_approve_milestone_state_transitions() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -3978,6 +4374,7 @@ fn test_mark_delivered_unauthorized_arbiter_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4012,6 +4409,7 @@ fn test_mark_delivered_unauthorized_freelancer_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4047,6 +4445,7 @@ fn test_approve_partial_exceeds_remaining_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4084,6 +4483,7 @@ fn test_approve_partial_index_out_of_range_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4120,6 +4520,7 @@ fn test_mark_delivered_state_transitions() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4164,6 +4565,7 @@ fn test_mark_delivered_state_transitions() {
         &token_contract_id2,
         &604800,
         &amounts2,
+        &0u32,
     );
     client2.fund(&client_addr2);
 
@@ -4235,6 +4637,7 @@ fn test_initialize_zero_auto_release_seconds_fails() {
         &token_contract_id,
         &0u64,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -4267,6 +4670,7 @@ fn test_claim_auto_release_zero_remaining_amount_fails() {
         &token_contract_id,
         &100u64,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4328,6 +4732,7 @@ fn setup_delivered_single(
         &token_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
@@ -4460,6 +4865,7 @@ fn test_approve_partial_does_not_mutate_sibling_milestone() {
         &token_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
@@ -4519,6 +4925,7 @@ fn test_approve_milestone_emits_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4565,6 +4972,7 @@ fn test_approve_milestone_on_disputed_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4601,6 +5009,7 @@ fn test_approve_milestone_on_refunded_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4647,6 +5056,7 @@ fn test_approve_milestone_max_i128_checked_math_no_overflow() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4696,6 +5106,7 @@ fn test_approve_milestone_overflow_checked_math_returns_error() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4747,6 +5158,7 @@ fn test_claim_auto_release_uses_temporary_storage_for_deadline() {
         &token_contract_id,
         &200,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4808,6 +5220,7 @@ fn test_time_until_auto_release_reads_temporary_storage() {
         &token_contract_id,
         &300,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4872,6 +5285,7 @@ fn test_approve_milestone_writes_temporary_released_flag() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -4947,6 +5361,7 @@ fn test_mark_delivered_wrong_caller_is_unauthorized() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -4994,6 +5409,7 @@ fn test_mark_delivered_u32_max_index_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -5053,6 +5469,7 @@ fn test_mark_delivered_on_released_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -5103,6 +5520,7 @@ fn test_mark_delivered_on_refunded_milestone_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -5162,6 +5580,7 @@ fn test_claim_auto_release_max_i128_checked_math_no_overflow() {
         &token_contract_id,
         &1u64,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -5221,6 +5640,7 @@ fn test_claim_auto_release_overflow_checked_math_returns_error() {
         &token_contract_id,
         &u64::MAX,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -5275,6 +5695,7 @@ fn test_claim_auto_release_double_execution_reverts() {
         &token_contract_id,
         &100u64,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -5340,6 +5761,7 @@ fn test_claim_auto_release_no_auth_provided_fails() {
         &token_contract_id,
         &100u64,
         &amounts,
+        &0u32,
     );
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
@@ -5402,6 +5824,7 @@ fn test_claim_auto_release_wrong_identity_unauthorized() {
         &token_contract_id,
         &100u64,
         &amounts,
+        &0u32,
     );
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
@@ -5477,6 +5900,7 @@ fn initialize_budget_for_milestone_count(count: u32) -> (u64, u64) {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let budget = env.cost_estimate().budget();
@@ -5520,6 +5944,7 @@ fn test_initialize_empty_milestones_fails() {
         &token_contract_id,
         &604800,
         &empty_amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -5552,6 +5977,7 @@ fn test_initialize_zero_address_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -5587,6 +6013,7 @@ fn test_initialize_negative_milestone_amount_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -5622,6 +6049,7 @@ fn test_initialize_milestone_sum_overflow_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -5657,6 +6085,7 @@ fn test_initialize_single_milestone_state_is_correct() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let job = escrow.get_job();
@@ -5715,6 +6144,7 @@ fn test_initialize_multiple_milestones_all_pending_correct_amounts() {
         &token_contract_id,
         &86400,
         &amounts,
+        &0u32,
     );
 
     let job = escrow.get_job();
@@ -5797,6 +6227,7 @@ fn test_initialize_invalid_amount_rolls_back_single_pass_writes() {
         &token_contract_id,
         &604800,
         &invalid_amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
     env.as_contract(&contract_id, || {
@@ -5812,6 +6243,7 @@ fn test_initialize_invalid_amount_rolls_back_single_pass_writes() {
         &token_contract_id,
         &604800,
         &valid_amounts,
+        &0u32,
     );
 
     let job = escrow.get_job();
@@ -5848,6 +6280,7 @@ fn test_initialize_event_includes_admin_and_creation_time() {
         &token_contract_id,
         &604_800,
         &amounts,
+        &0u32,
     );
 
     let events = crate::all_event_tuples(&env);
@@ -5883,6 +6316,7 @@ fn test_initialize_already_initialized_returns_correct_error() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Second call with different parameters ΓÇö must fail with AlreadyInitialized.
@@ -5895,6 +6329,7 @@ fn test_initialize_already_initialized_returns_correct_error() {
         &token_contract_id,
         &1,
         &new_amounts,
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 
@@ -5941,6 +6376,7 @@ fn test_initialize_state_transition_matrix() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert!(
         init_res.is_ok(),
@@ -5957,6 +6393,7 @@ fn test_initialize_state_transition_matrix() {
             &token_contract_id,
             &604800,
             &amounts,
+            &0u32,
         )
     };
 
@@ -6002,6 +6439,7 @@ fn test_initialize_state_transition_matrix() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow3.fund(&client_addr);
     escrow3.mark_delivered(&freelancer_addr, &0);
@@ -6024,6 +6462,7 @@ fn test_initialize_state_transition_matrix() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow2.fund(&client_addr);
 
@@ -6073,6 +6512,7 @@ fn test_initialize_auto_release_seconds_zero_fails() {
         &token_contract_id,
         &0u64,
         &amounts,
+        &0u32,
     );
     assert_eq!(init_result, Err(Ok(Error::InvalidAmount)));
 }
@@ -6170,6 +6610,7 @@ fn test_add_whitelisted_token_at_capacity_fails() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // The whitelist already contains token1 (added during initialize).
@@ -6226,6 +6667,7 @@ fn test_add_whitelisted_token_one_below_cap_succeeds() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Add 48 more to reach 49 total (one slot still available).
@@ -6278,6 +6720,7 @@ fn test_add_whitelisted_token_cap_resets_after_remove() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Fill whitelist to cap (50 entries).
@@ -6347,6 +6790,7 @@ fn test_add_whitelisted_token_duplicate_checked_before_cap() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Fill whitelist to cap (50 entries).
@@ -6395,6 +6839,7 @@ fn test_add_whitelisted_token_unauthorized_before_cap_check() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Fill whitelist to cap.
@@ -6441,6 +6886,7 @@ fn test_remove_whitelisted_token_rejects_zero_account_address() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let zero_account = Address::from_str(
@@ -6477,6 +6923,7 @@ fn test_remove_whitelisted_token_rejects_zero_contract_address() {
         &token1,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let zero_contract = Address::from_str(
@@ -6762,6 +7209,7 @@ fn test_add_whitelisted_token_after_funded_fails() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -6805,6 +7253,7 @@ fn test_add_whitelisted_token_freelancer_is_unauthorized() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // freelancer is a known participant but not the admin.
@@ -6842,6 +7291,7 @@ fn test_add_whitelisted_token_client_is_unauthorized() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // client is a known participant but not the admin.
@@ -6879,6 +7329,7 @@ fn test_add_whitelisted_token_emits_event() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.add_whitelisted_token(&admin_addr, &token2);
@@ -6929,6 +7380,7 @@ fn test_add_whitelisted_token_failed_does_not_emit_event() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // Attempt to add the already-whitelisted token ΓÇö must fail.
@@ -6983,6 +7435,7 @@ fn test_add_whitelisted_token_old_admin_rejected_after_transfer() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.transfer_admin(&admin_addr, &new_admin_addr);
@@ -7044,6 +7497,7 @@ fn test_transfer_admin_wrong_caller_returns_unauthorized() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // The single Admin read is compared against the caller → mismatch rejected,
@@ -7128,6 +7582,7 @@ fn test_add_whitelisted_token_does_not_whitelist_other_tokens() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // Only token2 is added.
@@ -7178,6 +7633,7 @@ fn test_add_whitelisted_token_rejects_zero_account_address() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let zero_account = Address::from_str(
@@ -7216,6 +7672,7 @@ fn test_add_whitelisted_token_rejects_zero_contract_address() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let zero_contract = Address::from_str(
@@ -7254,6 +7711,7 @@ fn test_add_whitelisted_token_rejects_self_address() {
         &token1,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // The escrow contract's own address must never be accepted as a token.
@@ -7454,6 +7912,7 @@ fn test_platform_fee_allocation_admin_override_requires_verified_admin() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -7495,6 +7954,7 @@ fn test_admin_override_tax_refund_requires_admin() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_admin_override_tax_refund(&attacker, &0u32);
@@ -7527,6 +7987,7 @@ fn test_admin_override_tax_refund_invalid_state() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // No tax withholding lock exists for milestone 0.
@@ -7561,6 +8022,7 @@ fn test_platform_fee_allocation_admin_override_invalid_state() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // If we try to override before setting it up (but after initialize), it's not locked.
@@ -7608,6 +8070,7 @@ fn test_platform_fee_allocation_admin_override_unlocks_locked_allocation() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -7673,6 +8136,7 @@ fn setup_locked_pf_alloc(env: &Env) -> (Address, Address, MilestoneEscrowClient<
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -7781,6 +8245,7 @@ fn setup_pf_alloc_escrow_unlocked(env: &Env) -> (Address, Address, MilestoneEscr
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
 
@@ -7818,6 +8283,7 @@ fn setup_pf_alloc_escrow(env: &Env) -> (Address, Address, MilestoneEscrowClient<
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     (admin_addr, contract_id, client)
@@ -7960,6 +8426,7 @@ fn test_platform_fee_allocation_treasury_exceeds_max_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Treasury at 2001 bps (> 2000)
@@ -7993,6 +8460,7 @@ fn test_platform_fee_allocation_client_exceeds_max_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Client at 5001 bps (> 5000)
@@ -8135,6 +8603,7 @@ fn test_multisig_split_refund_emits_event() {
         &token_contract_id,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     // Negative numerator
@@ -8210,6 +8679,7 @@ fn test_payment_streaming_milestones_negative_amount_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     assert_eq!(
@@ -8233,6 +8703,7 @@ fn test_payment_streaming_milestones_zero_denominator_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     assert_eq!(
@@ -8263,6 +8734,7 @@ fn test_payment_streaming_milestones_zero_amount_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     assert_eq!(
@@ -8286,6 +8758,7 @@ fn test_payment_streaming_milestones_full_amount() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.payment_streaming_milestones(&1000_i128, &100_i128, &100_i128);
@@ -8308,6 +8781,7 @@ fn test_payment_streaming_milestones_zero_numerator() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.payment_streaming_milestones(&1000_i128, &0_i128, &100_i128);
@@ -8330,6 +8804,7 @@ fn test_payment_streaming_milestones_overflow_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     assert_eq!(
@@ -8353,6 +8828,7 @@ fn test_payment_streaming_milestones_emits_event() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 1_000_i128;
@@ -8418,6 +8894,7 @@ fn setup_multisig_env(
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     (
@@ -8569,6 +9046,7 @@ fn test_tax_withholding_deductions_rejects_invalid_state_and_inputs() {
         &token_contract_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(
         client.try_tax_withholding_deductions(&0_u32, &1_u32),
@@ -9042,6 +9520,7 @@ fn test_raise_dispute_before_funded_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = escrow.try_raise_dispute(&client_addr, &0u32);
@@ -9119,6 +9598,7 @@ fn raise_dispute_budget_for_milestone_count(count: u32) -> (u64, u64) {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     token_admin.mint(&client_addr, &total);
     escrow.fund(&client_addr);
@@ -9192,6 +9672,7 @@ fn setup_escrow_for_multisig(env: &Env) -> (MilestoneEscrowClient<'_>, Address) 
         &token_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     (client, admin)
@@ -9224,6 +9705,7 @@ fn setup_multisig(env: &Env, threshold: u32) -> (MilestoneEscrowClient<'_>, Addr
         &token_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     token_admin.mint(&dummy_client, &1_000_i128);
@@ -9663,6 +10145,7 @@ fn test_milestone_time_extensions_half_rounds_nearest() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.milestone_time_extensions(&101_i128, &1_i128, &2_i128);
@@ -9694,6 +10177,7 @@ fn test_milestone_time_extensions_full_elapsed_gives_full_amount() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.milestone_time_extensions(&10_000_i128, &500_i128, &500_i128);
@@ -9725,6 +10209,7 @@ fn test_milestone_time_extensions_zero_elapsed_gives_nothing_to_freelancer() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.milestone_time_extensions(&10_000_i128, &0_i128, &500_i128);
@@ -9756,6 +10241,7 @@ fn test_milestone_time_extensions_zero_amount_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&0_i128, &1_i128, &3_i128);
@@ -9786,6 +10272,7 @@ fn test_milestone_time_extensions_large_prime_total_preserved() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 999_983_i128;
@@ -9823,6 +10310,7 @@ fn test_milestone_time_extensions_one_stroop_rounds_down() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let split = client.milestone_time_extensions(&1_i128, &1_i128, &3_i128);
@@ -9856,6 +10344,7 @@ fn test_milestone_time_extensions_sequential_splits_cover_total() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 1_000_000_i128;
@@ -9903,6 +10392,7 @@ fn test_milestone_time_extensions_negative_amount_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&-1_i128, &1_i128, &10_i128);
@@ -9931,6 +10421,7 @@ fn test_milestone_time_extensions_zero_total_seconds_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &0_i128, &0_i128);
@@ -9959,6 +10450,7 @@ fn test_milestone_time_extensions_elapsed_exceeds_total_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &11_i128, &10_i128);
@@ -9987,6 +10479,7 @@ fn test_milestone_time_extensions_negative_elapsed_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &-1_i128, &10_i128);
@@ -10015,6 +10508,7 @@ fn test_milestone_time_extensions_negative_total_seconds_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &5_i128, &-10_i128);
@@ -10043,6 +10537,7 @@ fn test_milestone_time_extensions_overflow_fails() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&i128::MAX, &i128::MAX, &i128::MAX);
@@ -10410,6 +10905,7 @@ fn test_multisig_2_of_3_satisfied_by_two_signers() {
         &token_id,
         &86400u64,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
@@ -10488,6 +10984,7 @@ fn test_multisig_threshold_one_satisfied_by_single_signer() {
         &token_id,
         &86400u64,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
@@ -10601,6 +11098,7 @@ fn test_raise_dispute_zero_address_before_not_funded_check() {
         &token_contract_id,
         &86400u64,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     // Escrow NOT funded
 
@@ -10689,6 +11187,7 @@ fn test_resolve_dispute_state_transition_matrix() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -10982,6 +11481,7 @@ fn test_milestone_time_extensions_emits_event() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 1_000_i128;
@@ -11033,6 +11533,7 @@ fn test_milestone_time_extensions_zero_elapsed_emits_event() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 1_000_i128;
@@ -11084,6 +11585,7 @@ fn test_milestone_time_extensions_full_elapsed_emits_event() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let amount = 1_000_i128;
@@ -11338,6 +11840,7 @@ fn test_escrow_interest_yield_set_valid_config_and_get() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
@@ -11365,6 +11868,7 @@ fn test_escrow_interest_yield_set_invalid_share_total_fails() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let res1 = client.try_set_escrow_interest_yield(&admin, &6_000u32, &5_000u32);
@@ -11391,6 +11895,7 @@ fn test_escrow_interest_yield_lock_unlock_workflow() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
@@ -11428,6 +11933,7 @@ fn test_escrow_interest_yield_unauthorized_admin_fails() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let impostor = Address::generate(&env);
@@ -11465,6 +11971,7 @@ fn test_set_escrow_interest_yield_writes_instance_storage_only() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // Verify Admin is in instance storage before the call.
@@ -11517,6 +12024,7 @@ fn test_set_escrow_interest_yield_does_not_touch_persistent_storage() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // Snapshot persistent::Admin before the call.
@@ -11564,6 +12072,7 @@ fn test_set_escrow_interest_yield_unauthorized_leaves_no_trace() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let attacker = Address::generate(&env);
@@ -11598,6 +12107,7 @@ fn test_set_escrow_interest_yield_invalid_ratio_leaves_no_trace() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let result = client.try_set_escrow_interest_yield(&admin, &7_000u32, &5_000u32);
@@ -11652,6 +12162,7 @@ fn test_set_escrow_interest_yield_update_is_idempotent_and_instance_only() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
@@ -11693,6 +12204,7 @@ fn test_payment_streaming_milestones_zero_total_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_payment_streaming_milestones(&0_i128, &1_i128, &2_i128);
@@ -11715,6 +12227,7 @@ fn test_payment_streaming_milestones_negative_total_fails() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_payment_streaming_milestones(&-500_i128, &1_i128, &2_i128);
@@ -11737,6 +12250,7 @@ fn test_payment_streaming_milestones_positive_total_succeeds() {
         &Address::generate(&env),
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     // 1000 streamed at 1/4 elapsed: first=250, second=750, sum=1000
@@ -11772,6 +12286,7 @@ fn test_milestone_time_extensions_zero_balance_is_blocked() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&0_i128, &3_i128, &10_i128);
@@ -11799,6 +12314,7 @@ fn test_milestone_time_extensions_negative_balance_is_blocked() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     let result = client.try_milestone_time_extensions(&-1_000_i128, &3_i128, &10_i128);
@@ -11826,6 +12342,7 @@ fn test_milestone_time_extensions_positive_balance_succeeds_and_emits_event() {
         &token_addr,
         &604800,
         &vec![&env, 1000_i128],
+        &0u32,
     );
 
     // 600 split at 1/3 elapsed: round_nearest(600 * 1 / 3) = 200
@@ -12044,6 +12561,7 @@ fn test_cancel_escrow_rejected_when_balance_drained_externally() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow_client.fund(&client_addr);
 
@@ -12083,6 +12601,7 @@ fn test_cancel_escrow_rejected_when_balance_drained_to_exact_zero() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow_client.fund(&client_addr);
     assert_eq!(token.balance(&contract_id), 5_000);
@@ -12136,6 +12655,7 @@ fn test_cancel_escrow_before_fund_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     let result = client.try_cancel_escrow(&client_addr);
@@ -12294,6 +12814,7 @@ fn test_cancel_escrow_succeeds_with_partial_balance() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow_client.fund(&client_addr);
 
@@ -12333,6 +12854,7 @@ fn test_cancel_escrow_empty_balance_emits_no_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     escrow_client.fund(&client_addr);
 
@@ -12374,6 +12896,7 @@ fn test_platform_fee_allocation_preserves_value_with_largest_remainders() {
         &token,
         &auto_release,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin, &4000, &4000, &2000);
@@ -12686,6 +13209,7 @@ fn test_set_platform_fee_allocation_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -12738,6 +13262,7 @@ fn test_lock_platform_fee_allocation_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &3000_u32, &6000_u32, &1000_u32);
@@ -12791,6 +13316,7 @@ fn test_pf_alloc_admin_override_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -12849,6 +13375,7 @@ fn test_calculate_platform_fee_split_emits_structured_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // 20/70/10 split on 1000 tokens
@@ -12906,6 +13433,7 @@ fn test_set_platform_fee_allocation_fails_does_not_emit_event() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Invalid BPS that don't sum to 10000
@@ -12957,6 +13485,7 @@ fn setup_pf_alloc_contract(env: &Env) -> (Address, Address, MilestoneEscrowClien
         &token,
         &604800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
     (contract_id, admin, escrow)
 }
@@ -13187,6 +13716,7 @@ fn test_platform_fee_split_rounds_to_zero() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
 
     // Treasury is capped at MAX_TREASURY_FEE_BPS, so an even-thirds split is no
@@ -13296,6 +13826,7 @@ fn test_cancel_escrow_not_funded_fails() {
         &token_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let result = escrow.try_cancel_escrow(&client_addr);
@@ -13456,6 +13987,7 @@ fn test_cancel_escrow_blocks_fund() {
         &token_id,
         &604800,
         &vec![&env, 5_000_i128],
+        &0u32,
     );
     // Fund first so cancel_escrow is callable, then verify downstream ops blocked.
     escrow.fund(&client_addr);
@@ -14266,6 +14798,7 @@ fn setup_admin_transfer_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>
         &token,
         &604800,
         &amounts,
+        &0u32,
     );
 
     (admin, client)
@@ -14399,6 +14932,7 @@ fn test_pf_alloc_not_initialized_and_unauthorized() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // Call with unauthorized user
@@ -14470,6 +15004,7 @@ fn test_initialize_zero_account_as_admin_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14494,6 +15029,7 @@ fn test_initialize_zero_contract_as_admin_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14519,6 +15055,7 @@ fn test_initialize_zero_account_as_freelancer_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14542,6 +15079,7 @@ fn test_initialize_zero_contract_as_freelancer_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14567,6 +15105,7 @@ fn test_initialize_zero_account_as_arbiter_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14590,6 +15129,7 @@ fn test_initialize_zero_contract_as_arbiter_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14617,6 +15157,7 @@ fn test_initialize_zero_account_as_token_fails() {
         &zero_account,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14642,6 +15183,7 @@ fn test_initialize_zero_contract_as_token_fails() {
         &zero_contract,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14669,6 +15211,7 @@ fn test_initialize_zero_contract_as_client_fails() {
         &token,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
 }
@@ -14711,6 +15254,7 @@ fn test_initialize_single_i128_max_amount_succeeds() {
         &token_contract_id,
         &604800,
         &vec![&env, i128::MAX],
+        &0u32,
     );
     assert_eq!(
         result,
@@ -14747,6 +15291,7 @@ fn test_initialize_two_i128_max_amounts_overflow_returns_typed_error() {
         &token_contract_id,
         &604800,
         &vec![&env, i128::MAX, i128::MAX],
+        &0u32,
     );
     assert_eq!(
         result,
@@ -14795,6 +15340,7 @@ fn test_initialize_i128_max_plus_one_overflows_returns_typed_error() {
         &token_contract_id,
         &604800,
         &vec![&env, i128::MAX, 1_i128],
+        &0u32,
     );
     assert_eq!(
         result,
@@ -14831,6 +15377,7 @@ fn test_initialize_zero_milestone_amount_returns_typed_error() {
         &token_contract_id,
         &604800,
         &vec![&env, 0_i128],
+        &0u32,
     );
     assert_eq!(
         result,
@@ -14877,6 +15424,7 @@ fn test_initialize_overflow_in_middle_of_list_returns_typed_error() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -14939,6 +15487,7 @@ fn test_raise_dispute_unauthorized_caller_returns_error_and_no_storage_mutated()
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -14991,6 +15540,7 @@ fn test_raise_dispute_illegal_source_state_returns_error_and_no_storage_mutated(
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -15054,6 +15604,7 @@ fn test_raise_dispute_refunded_state_returns_invalid_status_and_no_storage_mutat
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -15115,6 +15666,7 @@ fn test_raise_dispute_by_client_on_pending_milestone_succeeds() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
 
@@ -15157,6 +15709,7 @@ fn test_raise_dispute_by_freelancer_on_delivered_milestone_succeeds() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -15230,6 +15783,7 @@ fn test_initialize_admin_equals_client_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -15257,6 +15811,7 @@ fn test_initialize_admin_equals_freelancer_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -15284,6 +15839,7 @@ fn test_initialize_arbiter_equals_client_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -15311,6 +15867,7 @@ fn test_initialize_arbiter_equals_freelancer_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -15338,6 +15895,7 @@ fn test_initialize_client_equals_freelancer_fails() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(
         result,
@@ -15365,6 +15923,7 @@ fn test_initialize_four_distinct_addresses_succeeds() {
         &token_contract_id,
         &604800,
         &amounts,
+        &0u32,
     );
     assert_eq!(result, Ok(Ok(())), "four distinct addresses must succeed");
 

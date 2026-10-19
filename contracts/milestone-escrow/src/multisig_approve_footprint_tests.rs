@@ -99,6 +99,7 @@ fn multisig_escrow(
         &token_id,
         &604_800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
     if fund {
         escrow.fund(&client_addr);

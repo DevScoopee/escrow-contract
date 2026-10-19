@@ -154,6 +154,7 @@ fn test_cancel_escrow_not_funded() {
         &token_contract_id,
         &604800,
         &milestone_amounts,
+        &0u32,
     );
 
     // Escrow not funded. Call cancel_escrow by client (should fail).

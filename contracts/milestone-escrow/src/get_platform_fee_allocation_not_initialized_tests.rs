@@ -123,6 +123,7 @@ fn initialized_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>) {
         &token_id,
         &604_800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
 
     (contract_id, client)
@@ -395,6 +396,7 @@ fn failed_initialize_leaves_no_defaulted_allocation_behind() {
         &token_id,
         &0u64,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
     assert!(
         matches!(&result, Err(Ok(Error::InvalidAmount))),

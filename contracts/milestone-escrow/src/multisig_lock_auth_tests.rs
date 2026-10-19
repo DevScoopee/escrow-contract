@@ -23,6 +23,7 @@ fn setup(env: &Env) -> (Address, MilestoneEscrowClient<'_>, Address) {
         &token,
         &604800u64,
         &soroban_sdk::vec![env, 1_000_i128],
+        &0u32,
     );
     (contract_id, escrow, admin)
 }

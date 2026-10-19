@@ -100,6 +100,7 @@ fn test_returns_default_allocation_after_contract_init_only() {
         &token_contract_id,
         &604800,
         &vec![&env, 1_000_i128],
+        &0u32,
     );
 
     // initialize sets a default allocation; the call must succeed with the default values.

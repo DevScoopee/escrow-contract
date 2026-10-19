@@ -101,6 +101,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address) {
         &token_contract_id,
         &604_800u64,
         &amounts,
+        &0u32,
     );
 
     (escrow, admin_addr)

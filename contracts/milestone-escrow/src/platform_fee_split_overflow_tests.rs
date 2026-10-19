@@ -140,6 +140,7 @@ fn fixture(env: &Env, client_bps: u32, freelancer_bps: u32, treasury_bps: u32) -
         &token_id,
         &604_800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
     escrow.set_platform_fee_allocation(&admin, &client_bps, &freelancer_bps, &treasury_bps);
 

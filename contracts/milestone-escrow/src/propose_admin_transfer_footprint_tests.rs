@@ -144,6 +144,7 @@ fn test_propose_admin_transfer_happy_path_unaffected() {
         &token,
         &604800,
         &soroban_sdk::vec![&env, 1_000_i128],
+        &0u32,
     );
 
     let new_admin = Address::generate(&env);

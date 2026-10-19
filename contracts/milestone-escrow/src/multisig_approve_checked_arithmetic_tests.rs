@@ -85,6 +85,7 @@ fn funded_multisig_escrow(
         &token_id,
         &604800u64,
         &vec![env, 1_000_i128],
+        &0u32,
     );
 
     token_admin.mint(&client_addr, &1_000_i128);

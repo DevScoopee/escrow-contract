@@ -39,6 +39,9 @@
                       "i128": "1000"
                     }
                   ]
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -202,6 +205,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "arbiter_fee_bps"
+                            },
+                            "val": {
+                              "u32": 0
                             }
                           },
                           {

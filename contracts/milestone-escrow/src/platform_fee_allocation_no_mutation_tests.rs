@@ -50,6 +50,7 @@ fn escrow_with_fee_allocation(env: &Env) -> (MilestoneEscrowClient<'_>, Address)
         &token_contract_id,
         &604_800u64,
         &amounts,
+        &0u32,
     );
 
     escrow.set_platform_fee_allocation(&admin_addr, &2_000_u32, &7_000_u32, &1_000_u32);

@@ -105,6 +105,7 @@ fn fixture(env: &Env, client_bps: u32, freelancer_bps: u32, treasury_bps: u32) -
         &token_id,
         &604_800u64,
         &milestones,
+        &0u32,
     );
     escrow.fund(&client_addr);
     escrow.set_platform_fee_allocation(&admin, &client_bps, &freelancer_bps, &treasury_bps);
