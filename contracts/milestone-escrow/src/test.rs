@@ -17,6 +17,14 @@ mod admin_override_refund_tests;
 mod admin_pause_escrow_tests;
 #[path = "admin_resume_escrow_footprint_tests.rs"]
 mod admin_resume_escrow_footprint_tests;
+#[path = "admin_transfer_proposal_binding_tests.rs"]
+mod admin_transfer_proposal_binding_tests;
+#[path = "transfer_admin_multisig_gate_tests.rs"]
+mod transfer_admin_multisig_gate_tests;
+#[path = "multisig_approve_unfunded_tests.rs"]
+mod multisig_approve_unfunded_tests;
+#[path = "tax_recipient_settlement_tests.rs"]
+mod tax_recipient_settlement_tests;
 #[path = "admin_tax_withholding_guards_tests.rs"]
 mod admin_tax_withholding_guards_tests;
 #[path = "arbitration_split_event_tests.rs"]
