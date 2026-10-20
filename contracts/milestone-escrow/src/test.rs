@@ -27,6 +27,8 @@ mod admin_transfer_target_tests;
 mod arbitration_split_event_tests;
 #[path = "dispute_timeout_tests.rs"]
 mod dispute_timeout_tests;
+#[path = "milestone_amendment_tests.rs"]
+mod milestone_amendment_tests;
 #[path = "emergency_pause_split_refund_tests.rs"]
 mod emergency_pause_split_refund_tests;
 #[path = "execute_admin_transfer_tests.rs"]
