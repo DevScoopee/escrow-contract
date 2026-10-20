@@ -39,15 +39,16 @@ where
     T::from_val(env, &payload)
 }
 
-fn balance(env: &Env, token_addr: &Address, holder: &Address) -> i128 {
-    token::Client::new(env, token_addr).balance(holder)
+fn balance(env: &Env, tok: &Address, who: &Address) -> i128 {
+    token::Client::new(env, tok).balance(who)
 }
 
 /// Read the stored `JobMeta` (instance storage) to observe `total_amount`
 /// and `milestone_count`, which `get_job` does not surface.
 fn job_meta(env: &Env, contract_id: &Address) -> JobMeta {
     env.as_contract(contract_id, || {
-        env.storage()
+        env
+            .storage()
             .instance()
             .get::<_, JobMeta>(&DataKey::Job)
             .expect("job meta must be stored")
@@ -55,12 +56,7 @@ fn job_meta(env: &Env, contract_id: &Address) -> JobMeta {
 }
 
 fn milestone_sum(client: &MilestoneEscrowClient<'_>) -> i128 {
-    client
-        .get_job()
-        .milestones
-        .iter()
-        .map(|m| m.amount)
-        .sum()
+    client.get_job().milestones.iter().map(|m| m.amount).sum()
 }
 
 // ── add_milestone ────────────────────────────────────────────────────────────
@@ -75,7 +71,8 @@ fn add_milestone_appends_pending_milestone_and_updates_totals() {
 
     assert_eq!(job_meta(&env, &contract_id).total_amount, 3_000);
 
-    escrow.add_milestone(&client_addr, &freelancer_addr, &500_i128);
+    escrow
+        .add_milestone(&client_addr, &freelancer_addr, &500_i128);
 
     let job = escrow.get_job();
     assert_eq!(job.milestones.len(), 3);
@@ -94,22 +91,19 @@ fn add_milestone_appends_pending_milestone_and_updates_totals() {
 fn add_milestone_updates_balances_and_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
+    // Setup funds 3_000 (client left with 0), then mint 500 for the add.
     let (client_addr, freelancer_addr, _, _, token_addr, contract_id, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000_i128]);
     token::StellarAssetClient::new(&env, &token_addr).mint(&client_addr, &500);
 
-    let client_before = balance(&env, &token_addr, &client_addr);
-    let escrow_before = balance(&env, &token_addr, &contract_id);
+    escrow
+        .add_milestone(&client_addr, &freelancer_addr, &500_i128);
 
-    escrow.add_milestone(&client_addr, &freelancer_addr, &500_i128);
-
-    assert_eq!(balance(&env, &token_addr, &client_addr), client_before - 500);
-    assert_eq!(balance(&env, &token_addr, &contract_id), escrow_before + 500);
+    assert_eq!(balance(&env, &token_addr, &client_addr), 0);
+    assert_eq!(balance(&env, &token_addr, &contract_id), 3_500);
     // Conservation invariant: escrow balance == total_amount.
-    assert_eq!(
-        balance(&env, &token_addr, &contract_id),
-        job_meta(&env, &contract_id).total_amount
-    );
+    let meta = job_meta(&env, &contract_id);
+    assert_eq!(balance(&env, &token_addr, &contract_id), meta.total_amount);
 
     assert_eq!(topic_count(&env, symbol_short!("ms_add")), 1);
     let event: MilestoneAddedEvent = last_event_payload(&env);
@@ -129,16 +123,16 @@ fn add_milestone_rejected_without_freelancer_signature() {
     let (client_addr, freelancer_addr, _, _, _, contract_id, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    let args = (&client_addr, &freelancer_addr, &500_i128).into_val(&env);
+    let invoke = MockAuthInvoke {
+        contract: &contract_id,
+        fn_name: "add_milestone",
+        args: (&client_addr, &freelancer_addr, &500_i128).into_val(&env),
+        sub_invokes: &[],
+    };
     let result = escrow
         .mock_auths(&[MockAuth {
             address: &client_addr,
-            invoke: &MockAuthInvoke {
-                contract: &contract_id,
-                fn_name: "add_milestone",
-                args,
-                sub_invokes: &[],
-            },
+            invoke: &invoke,
         }])
         .try_add_milestone(&client_addr, &freelancer_addr, &500_i128);
 
@@ -159,16 +153,16 @@ fn add_milestone_rejected_without_client_signature() {
     let (client_addr, freelancer_addr, _, _, _, contract_id, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    let args = (&client_addr, &freelancer_addr, &500_i128).into_val(&env);
+    let invoke = MockAuthInvoke {
+        contract: &contract_id,
+        fn_name: "add_milestone",
+        args: (&client_addr, &freelancer_addr, &500_i128).into_val(&env),
+        sub_invokes: &[],
+    };
     let result = escrow
         .mock_auths(&[MockAuth {
             address: &freelancer_addr,
-            invoke: &MockAuthInvoke {
-                contract: &contract_id,
-                fn_name: "add_milestone",
-                args,
-                sub_invokes: &[],
-            },
+            invoke: &invoke,
         }])
         .try_add_milestone(&client_addr, &freelancer_addr, &500_i128);
 
@@ -185,9 +179,10 @@ fn add_milestone_rejects_third_party_addresses() {
     let env = Env::default();
     env.mock_all_auths();
     let (client_addr, _, _, _, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
-    let fake_freelancer = Address::generate(&env);
 
-    let result = escrow.try_add_milestone(&client_addr, &fake_freelancer, &500_i128);
+    let fake_freelancer = Address::generate(&env);
+    let result = escrow
+        .try_add_milestone(&client_addr, &fake_freelancer, &500_i128);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
     let fake_client = Address::generate(&env);
@@ -202,7 +197,8 @@ fn add_milestone_requires_funded_job() {
     let (client_addr, freelancer_addr, _, _, _, _, escrow) =
         setup_unfunded_escrow(&env, vec![&env, 1_000_i128]);
 
-    let result = escrow.try_add_milestone(&client_addr, &freelancer_addr, &500_i128);
+    let result = escrow
+        .try_add_milestone(&client_addr, &freelancer_addr, &500_i128);
     assert_eq!(result, Err(Ok(Error::NotFunded)));
 }
 
@@ -217,10 +213,9 @@ fn add_milestone_rejects_non_positive_amounts() {
         escrow.try_add_milestone(&client_addr, &freelancer_addr, &0_i128),
         Err(Ok(Error::InvalidAmount))
     );
-    assert_eq!(
-        escrow.try_add_milestone(&client_addr, &freelancer_addr, &(-100_i128)),
-        Err(Ok(Error::InvalidAmount))
-    );
+    let res = escrow
+        .try_add_milestone(&client_addr, &freelancer_addr, &(-100_i128));
+    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
     assert_eq!(escrow.get_job().milestones.len(), 1);
 }
 
@@ -234,8 +229,9 @@ fn add_milestone_enforces_max_milestones_cap() {
     }
     let (client_addr, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
 
-    let result = escrow.try_add_milestone(&client_addr, &freelancer_addr, &10_i128);
-    assert_eq!(result, Err(Ok(Error::TooManyMilestones)));
+    let res = escrow
+        .try_add_milestone(&client_addr, &freelancer_addr, &10_i128);
+    assert_eq!(res, Err(Ok(Error::TooManyMilestones)));
     assert_eq!(escrow.get_job().milestones.len(), MAX_MILESTONES);
 }
 
@@ -248,10 +244,8 @@ fn reduce_milestone_refunds_difference_and_emits_event() {
     let (client_addr, freelancer_addr, _, _, token_addr, contract_id, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000_i128]);
 
-    let client_before = balance(&env, &token_addr, &client_addr);
-    let escrow_before = balance(&env, &token_addr, &contract_id);
-
-    escrow.reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
+    escrow
+        .reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
 
     let job = escrow.get_job();
     let milestone = job.milestones.get(0).expect("first milestone exists");
@@ -263,9 +257,9 @@ fn reduce_milestone_refunds_difference_and_emits_event() {
     assert_eq!(meta.total_amount, 2_600);
     assert_eq!(meta.milestone_count, 2);
 
-    // Conservation: exactly the difference moved back to the client.
-    assert_eq!(balance(&env, &token_addr, &client_addr), client_before + 400);
-    assert_eq!(balance(&env, &token_addr, &contract_id), escrow_before - 400);
+    // Conservation: exactly the 400 difference moved back to the client.
+    assert_eq!(balance(&env, &token_addr, &client_addr), 400);
+    assert_eq!(balance(&env, &token_addr, &contract_id), 2_600);
 
     assert_eq!(topic_count(&env, symbol_short!("ms_reduce")), 1);
     let event: MilestoneReducedEvent = last_event_payload(&env);
@@ -285,37 +279,32 @@ fn reduce_milestone_rejected_without_both_signatures() {
     let (client_addr, freelancer_addr, _, _, token_addr, contract_id, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    let args = (&client_addr, &freelancer_addr, &0u32, &600_i128).into_val(&env);
+    let invoke = MockAuthInvoke {
+        contract: &contract_id,
+        fn_name: "reduce_milestone",
+        args: (&client_addr, &freelancer_addr, &0u32, &600_i128).into_val(&env),
+        sub_invokes: &[],
+    };
     let result = escrow
         .mock_auths(&[MockAuth {
             address: &client_addr,
-            invoke: &MockAuthInvoke {
-                contract: &contract_id,
-                fn_name: "reduce_milestone",
-                args: args.clone(),
-                sub_invokes: &[],
-            },
+            invoke: &invoke,
         }])
         .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
     assert!(
         matches!(result, Err(Err(_))),
-        "client-only signature must revert at host level"
+        "client-only signature must revert"
     );
 
     let result = escrow
         .mock_auths(&[MockAuth {
             address: &freelancer_addr,
-            invoke: &MockAuthInvoke {
-                contract: &contract_id,
-                fn_name: "reduce_milestone",
-                args,
-                sub_invokes: &[],
-            },
+            invoke: &invoke,
         }])
         .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
     assert!(
         matches!(result, Err(Err(_))),
-        "freelancer-only signature must revert at host level"
+        "freelancer-only signature must revert"
     );
 
     // No mutation, no refund.
@@ -332,19 +321,16 @@ fn reduce_milestone_rejects_non_pending_milestones() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000_i128]);
 
     escrow.mark_delivered(&freelancer_addr, &0u32);
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128),
-        Err(Ok(Error::InvalidStatus))
-    );
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
 
     escrow.approve_milestone(&client_addr, &0u32);
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128),
-        Err(Ok(Error::InvalidStatus))
-    );
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
 
-    let sum = milestone_sum(&escrow);
-    assert_eq!(sum, 3_000);
+    assert_eq!(milestone_sum(&escrow), 3_000);
 }
 
 #[test]
@@ -355,23 +341,23 @@ fn reduce_milestone_rejects_invalid_amounts() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     // Not a reduction (equal or larger).
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &1_000_i128),
-        Err(Ok(Error::InvalidAmount))
-    );
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &1_500_i128),
-        Err(Ok(Error::InvalidAmount))
-    );
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &1_000_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
+
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &1_500_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
+
     // Zero / negative new amount would delete the milestone's value.
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &0_i128),
-        Err(Ok(Error::InvalidAmount))
-    );
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &(-1_i128)),
-        Err(Ok(Error::InvalidAmount))
-    );
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &0_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
+
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &(-1_i128));
+    assert_eq!(res, Err(Ok(Error::InvalidAmount)));
+
     assert_eq!(milestone_sum(&escrow), 1_000);
 }
 
@@ -382,25 +368,22 @@ fn reduce_milestone_rejects_bad_index_third_party_and_unfunded() {
     let (client_addr, freelancer_addr, _, _, _, _, escrow) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    assert_eq!(
-        escrow.try_reduce_milestone(&client_addr, &freelancer_addr, &1u32, &600_i128),
-        Err(Ok(Error::InvalidMilestone))
-    );
+    let res = escrow
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &1u32, &600_i128);
+    assert_eq!(res, Err(Ok(Error::InvalidMilestone)));
 
     let fake = Address::generate(&env);
-    assert_eq!(
-        escrow.try_reduce_milestone(&fake, &freelancer_addr, &0u32, &600_i128),
-        Err(Ok(Error::Unauthorized))
-    );
+    let res = escrow
+        .try_reduce_milestone(&fake, &freelancer_addr, &0u32, &600_i128);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
 
     let env2 = Env::default();
     env2.mock_all_auths();
     let (client_addr, freelancer_addr, _, _, _, _, unfunded) =
         setup_unfunded_escrow(&env2, vec![&env2, 1_000_i128]);
-    assert_eq!(
-        unfunded.try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128),
-        Err(Ok(Error::NotFunded))
-    );
+    let res = unfunded
+        .try_reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
+    assert_eq!(res, Err(Ok(Error::NotFunded)));
 }
 
 // ── conservation across an amend sequence ────────────────────────────────────
@@ -414,19 +397,22 @@ fn amendment_sequence_preserves_conservation_invariant() {
     token::StellarAssetClient::new(&env, &token_addr).mint(&client_addr, &700);
 
     // add 700, then reduce the appended milestone back to 200.
-    escrow.add_milestone(&client_addr, &freelancer_addr, &700_i128);
-    escrow.reduce_milestone(&client_addr, &freelancer_addr, &2u32, &200_i128);
+    escrow
+        .add_milestone(&client_addr, &freelancer_addr, &700_i128);
+    escrow
+        .reduce_milestone(&client_addr, &freelancer_addr, &2u32, &200_i128);
 
     let meta = job_meta(&env, &contract_id);
     assert_eq!(meta.total_amount, 3_200);
     assert_eq!(milestone_sum(&escrow), meta.total_amount);
     // Contract holds exactly total_amount: 3_000 funded + 700 added − 500 refunded.
     assert_eq!(balance(&env, &token_addr, &contract_id), 3_200);
-    // Client: 3_000 minted − 3_000 funded, + 700 minted − 700 deposited + 500 refunded.
+    // Client: 3_000 minted − 3_000 funded + 700 minted − 700 deposited + 500 refunded.
     assert_eq!(balance(&env, &token_addr, &client_addr), 500);
 
     // A further reduce on a Pending milestone still balances.
-    escrow.reduce_milestone(&client_addr, &freelancer_addr, &0u32, &400_i128);
+    escrow
+        .reduce_milestone(&client_addr, &freelancer_addr, &0u32, &400_i128);
     let meta = job_meta(&env, &contract_id);
     assert_eq!(milestone_sum(&escrow), meta.total_amount);
     assert_eq!(balance(&env, &token_addr, &contract_id), meta.total_amount);
