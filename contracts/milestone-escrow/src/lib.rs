@@ -3270,7 +3270,7 @@ impl MilestoneEscrow {
         let refund = milestone.amount - new_amount;
 
         let token_client = token::Client::new(&env, &meta.token);
-        let balance = token_client.balance(env.current_contract_address());
+        let balance = token_client.balance(&env.current_contract_address());
         if balance < refund {
             return Err(Error::InsufficientBalance);
         }
