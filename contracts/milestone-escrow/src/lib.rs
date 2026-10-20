@@ -339,11 +339,11 @@ pub enum DataKey {
     /// cleared by `multisig_admin_override_release` or
     /// `multisig_admin_override_refund`.
     MultisigLocked,
-    /// Temporary key: cumulative extension seconds applied to a Delivered
+    /// Persistent key: cumulative extension seconds applied to a Delivered
     /// milestone. Written by `extend_milestone_deadline`, read by
-    /// `claim_auto_release` and `time_until_auto_release`. Uses temporary
-    /// storage because the extension is deadline-scoped workflow state whose
-    /// ledger footprint cost should not persist beyond the auto-release window.
+    /// `claim_auto_release` and `time_until_auto_release`. Stored in persistent
+    /// storage so the extension survives TTL eviction and remains valid until
+    /// the milestone reaches a terminal state.
     ///
     /// Short key `TimeExt` (7 chars vs 22) to minimise on-ledger symbol bytes.
     TimeExt(u32),
@@ -3820,6 +3820,9 @@ impl MilestoneEscrow {
         env.storage()
             .temporary()
             .remove(&DataKey::TimeExt(milestone_index));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TimeExt(milestone_index));
 
         env.events().publish(
             (symbol_short!("msrev"),),
@@ -3889,7 +3892,7 @@ impl MilestoneEscrow {
             Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
         let new_deadline = Self::auto_release_deadline(&meta, delivered_at, new_extension)?;
         env.storage()
-            .temporary()
+            .persistent()
             .set(&DataKey::TimeExt(milestone_index), &new_extension);
 
         env.events().publish(
@@ -6551,7 +6554,7 @@ impl MilestoneEscrow {
         let new_deadline = Self::auto_release_deadline(&meta, delivered_at, new_extension)?;
 
         env.storage()
-            .temporary()
+            .persistent()
             .set(&DataKey::TimeExt(milestone_index), &new_extension);
 
         env.events().publish(

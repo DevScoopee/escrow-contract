@@ -84,6 +84,7 @@ mod tax_withholding_split_refund_tests;
 mod tax_withholding_tests;
 mod test_emergency_pause;
 mod test_payment_streaming_milestones;
+mod time_ext_persistence_tests;
 mod time_until_auto_release_tests;
 mod unlock_escrow_interest_yield_event_tests;
 mod version_tests;
