@@ -53,19 +53,48 @@ jobs:
         run: python3 scripts/check-orphan-test-modules.py
 
       - name: Format check
-        # TEMP DIAGNOSTIC: surface rustfmt diff via commit statuses + annotations, then fail.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.sha }}
+        # TEMP DIAGNOSTIC: run fmt/clippy/tests, stream base64 logs via 10 annotation slots.
         run: |
           set +e
           cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check > /tmp/fmt.log 2>&1
           rc=$?
-          sed -e 's/\x1b\[[0-9;]*m//g' /tmp/fmt.log > /tmp/fmt.clean
-          python3 -c 'import base64; open("/tmp/fmt.b64","w").write(base64.b64encode(open("/tmp/fmt.clean","rb").read()).decode())'
-          echo "::error::META| rc=$rc bytes=$(wc -c < /tmp/fmt.clean) hunks=$(grep -c '^Diff in' /tmp/fmt.clean) b64lines=$(wc -l < /tmp/fmt.b64)"
-          n=9; fold -w 1000 /tmp/fmt.b64 | head -n 9 | while IFS= read -r l; do n=$((n+1)); echo "::error::Q${n} ${l}"; done
-          exit $rc
+          cargo clippy --manifest-path contracts/milestone-escrow/Cargo.toml --all-targets -- -D warnings > /tmp/clippy.log 2>&1
+          crc=$?
+          if [ $rc -eq 0 ] && [ $crc -eq 0 ]; then
+            cargo test --manifest-path contracts/milestone-escrow/Cargo.toml > /tmp/test.log 2>&1
+            crt=$?
+          else
+            crt=0
+          fi
+          for x in fmt clippy test; do
+            [ -f /tmp/$x.log ] || : > /tmp/$x.log
+            sed -e 's/\x1b\[[0-9;]*m//g' /tmp/$x.log > /tmp/$x.clean
+            python3 -c "import base64; open('/tmp/$x.b64','w').write(base64.b64encode(open('/tmp/$x.clean','rb').read()).decode())"
+          done
+          rm -f /tmp/want.txt
+          if [ $rc -ne 0 ]; then echo fmt >> /tmp/want.txt; fi
+          if [ $crc -ne 0 ]; then echo clippy >> /tmp/want.txt; fi
+          if [ $crt -ne 0 ]; then echo test >> /tmp/want.txt; fi
+          if [ ! -s /tmp/want.txt ]; then echo "::error::SUMM| fmt=0 clippy=0 test=0"; exit 0; fi
+          echo "::error::SUMM| rc=$rc crc=$crc crt=$crt b $(wc -c < /tmp/fmt.clean) c $(wc -c < /tmp/clippy.clean) t $(wc -c < /tmp/test.clean)"
+          python3 - <<'PYEOF'
+          import base64
+          want = [w.strip() for w in open('/tmp/want.txt') if w.strip()]
+          room = 9
+          emitted = 0
+          for p, name in enumerate(want):
+              if room <= 0:
+                  break
+              data = base64.b64encode(open(f'/tmp/{name}.clean', 'rb').read()).decode()
+              chunks = [data[i:i+950] for i in range(0, len(data), 950)]
+              for k, c in enumerate(chunks[:room]):
+                  print(f'::error::P{p}-{k} {c}')
+                  emitted += 1
+              room -= len(chunks[:room])
+          if emitted == 0:
+              print('::error::NOPAYLOAD| none')
+          PYEOF
+          exit 1
 
       - name: Clippy
         run: cargo clippy --manifest-path contracts/milestone-escrow/Cargo.toml --all-targets -- -D warnings
