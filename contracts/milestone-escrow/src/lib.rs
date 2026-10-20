@@ -3185,7 +3185,7 @@ impl MilestoneEscrow {
         Self::store_job_meta(&env, &meta);
 
         let token_client = token::Client::new(&env, &meta.token);
-        token_client.transfer(&client, &env.current_contract_address(), &amount);
+        token_client.transfer(&client, env.current_contract_address(), &amount);
 
         env.events().publish(
             (symbol_short!("ms_add"),),
@@ -3270,7 +3270,7 @@ impl MilestoneEscrow {
         let refund = milestone.amount - new_amount;
 
         let token_client = token::Client::new(&env, &meta.token);
-        let balance = token_client.balance(&env.current_contract_address());
+        let balance = token_client.balance(env.current_contract_address());
         if balance < refund {
             return Err(Error::InsufficientBalance);
         }
@@ -3282,7 +3282,7 @@ impl MilestoneEscrow {
         meta.total_amount -= refund;
         Self::store_job_meta(&env, &meta);
 
-        token_client.transfer(&env.current_contract_address(), &client, &refund);
+        token_client.transfer(env.current_contract_address(), &client, &refund);
 
         env.events().publish(
             (symbol_short!("ms_reduce"),),

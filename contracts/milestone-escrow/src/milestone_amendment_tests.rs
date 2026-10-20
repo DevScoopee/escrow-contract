@@ -392,8 +392,7 @@ fn amendment_sequence_preserves_conservation_invariant() {
     assert_eq!(balance(&env, &token_addr, &client_addr), 500);
 
     // A further reduce on a Pending milestone still balances.
-    escrow
-        .reduce_milestone(&client_addr, &freelancer_addr, &0u32, &400_i128);
+    escrow.reduce_milestone(&client_addr, &freelancer_addr, &0u32, &400_i128);
     let meta = job_meta(&env, &contract_id);
     assert_eq!(milestone_sum(&escrow), meta.total_amount);
     assert_eq!(balance(&env, &token_addr, &contract_id), meta.total_amount);
