@@ -105,31 +105,34 @@ fn add_milestone_updates_balances_and_emits_event() {
     // TEMP DIAGNOSTIC (remove before merge)
     let all = crate::all_event_tuples(&env);
     let want: Val = symbol_short!("ms_add").into_val(&env);
-    let start = all.len().saturating_sub(4);
-    let dump = all
-        .iter()
-        .enumerate()
-        .skip(start)
-        .map(|(i, e)| {
-            let tp = e.1.get(0).map(|t| t.get_payload());
-            format!(
-                "EVT {}: topics_len={:?} t0={:?} want={:?} match={:?} | ",
-                i,
-                e.1.len(),
-                tp,
-                want.get_payload(),
-                tp == Some(want.get_payload())
-            )
-        })
-        .collect::<String>();
-    panic!("TOPICDUMP total={} {}", all.len(), dump);
+    let mut dump = 0u64;
+    let mut details = 0u64;
+    for (i, e) in all.iter().enumerate() {
+        if let Some(t) = e.1.get(0) {
+            let p = t.get_payload();
+            if p == want.get_payload() {
+                dump |= 1u64 << i;
+            }
+            details = details.wrapping_mul(31).wrapping_add(p);
+        }
+    }
+    let wantp = want.get_payload();
+    assert_eq!(topic_count(&env, symbol_short!("ms_add")), 1);
     let event: MilestoneAddedEvent = last_event_payload(&env);
+    assert_eq!(
+        event.total_amount,
+        dump,
+        "TOPICDUMP total={} want={} details={} count={}",
+        all.len(),
+        wantp,
+        details,
+        topic_count(&env, symbol_short!("ms_add"))
+    );
     assert_eq!(event.contract_id, contract_id);
     assert_eq!(event.client, client_addr);
     assert_eq!(event.freelancer, freelancer_addr);
     assert_eq!(event.milestone_index, 2);
     assert_eq!(event.amount, 500);
-    assert_eq!(event.total_amount, 3_500);
     assert_eq!(event.milestone_count, 3);
 }
 
