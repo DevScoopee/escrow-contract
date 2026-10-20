@@ -105,19 +105,24 @@ fn add_milestone_updates_balances_and_emits_event() {
     // TEMP DIAGNOSTIC (remove before merge)
     let all = crate::all_event_tuples(&env);
     let want: Val = symbol_short!("ms_add").into_val(&env);
-    let start = all.len().saturating_sub(6);
-    for (i, e) in all.iter().enumerate().skip(start) {
-        let tp = e.1.get(0).map(|t| t.get_payload());
-        println!(
-            "EVT {}: topics_len={:?} t0={:?} want={:?} match={:?}",
-            i,
-            e.1.len(),
-            tp,
-            want.get_payload(),
-            tp == Some(want.get_payload())
-        );
-    }
-    assert_eq!(topic_count(&env, symbol_short!("ms_add")), 1);
+    let start = all.len().saturating_sub(4);
+    let dump = all
+        .iter()
+        .enumerate()
+        .skip(start)
+        .map(|(i, e)| {
+            let tp = e.1.get(0).map(|t| t.get_payload());
+            format!(
+                "EVT {}: topics_len={:?} t0={:?} want={:?} match={:?} | ",
+                i,
+                e.1.len(),
+                tp,
+                want.get_payload(),
+                tp == Some(want.get_payload())
+            )
+        })
+        .collect::<String>();
+    panic!("TOPICDUMP total={} {}", all.len(), dump);
     let event: MilestoneAddedEvent = last_event_payload(&env);
     assert_eq!(event.contract_id, contract_id);
     assert_eq!(event.client, client_addr);
