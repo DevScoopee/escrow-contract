@@ -3282,7 +3282,7 @@ impl MilestoneEscrow {
         meta.total_amount -= refund;
         Self::store_job_meta(&env, &meta);
 
-        token_client.transfer(env.current_contract_address(), &client, &refund);
+        token_client.transfer(&env.current_contract_address(), &client, &refund);
 
         env.events().publish(
             (symbol_short!("ms_reduce"),),
