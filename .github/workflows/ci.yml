@@ -63,12 +63,13 @@ jobs:
           if [ $rc -eq 0 ] && [ $crc -eq 0 ]; then
             cargo test --manifest-path contracts/milestone-escrow/Cargo.toml > /tmp/test.log 2>&1
             crt=$?
+            sed -e 's/\x1b\[[0-9;]*m//g' /tmp/test.log | grep -E 'FAILED|panicked|test result|^error|^failures|^ *-->' -A 6 | tail -c 8000 > /tmp/test.clean
           else
             crt=0
           fi
           for x in fmt clippy test; do
             [ -f /tmp/$x.log ] || : > /tmp/$x.log
-            sed -e 's/\x1b\[[0-9;]*m//g' /tmp/$x.log > /tmp/$x.clean
+            [ -f /tmp/$x.clean ] || sed -e 's/\x1b\[[0-9;]*m//g' /tmp/$x.log > /tmp/$x.clean
             python3 -c "import base64; open('/tmp/$x.b64','w').write(base64.b64encode(open('/tmp/$x.clean','rb').read()).decode())"
           done
           rm -f /tmp/want.txt
