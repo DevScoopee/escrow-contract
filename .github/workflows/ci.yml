@@ -76,14 +76,10 @@ jobs:
             status "fmt/$tag" "${chunk:0:140}"
           done
           grep '^Diff in' /tmp/fmt.clean | head -n 10 | while IFS= read -r l; do echo "::error::FILE|${l:0:180}"; done
-          base64 -w 76 /tmp/fmt.clean > /tmp/fmt.b64
-          seq=0
-          while IFS= read -r l; do
-            seq=$((seq + 1))
-            echo "::error::B64 ${seq} ${l}"
-            [ "$seq" -ge 40 ] && break
-          done < /tmp/fmt.b64
-          echo "::error::DONE|lines=$seq total=$(wc -l < /tmp/fmt.b64)"
+          echo "b64bin=$(command -v base64 || echo MISSING)" | sed 's/^/::error::ENV|/'
+          python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64encode(open("/tmp/fmt.clean","rb").read()))' > /tmp/fmt.b64
+          n=0; fold -w 120 /tmp/fmt.b64 | while IFS= read -r l; do n=$((n+1)); echo "::error::P${n} ${l}"; done
+          echo "::error::END|done"
           exit $rc
 
       - name: Clippy
