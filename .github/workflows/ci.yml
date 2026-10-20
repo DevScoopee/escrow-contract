@@ -76,7 +76,7 @@ jobs:
             status "fmt/$tag" "${chunk:0:140}"
           done
           grep '^Diff in' /tmp/fmt.clean | head -n 10 | while IFS= read -r l; do echo "::error::FILE|${l:0:180}"; done
-          sed -n '/^Diff in/,/^$/p' /tmp/fmt.clean | grep -E '^[+-]' | head -c 2200 | tr '\n' '~' | sed 's/~/\n/g' | head -n 60 | while IFS= read -r l; do echo "::error::HUNK|${l:0:150}"; done
+          sed -n '/^Diff in/,/^$/p' /tmp/fmt.clean | tr '\t' '~' | awk '{printf "::error::D%03d>%s\n", NR, $0}' | head -n 95
           exit $rc
 
       - name: Clippy
