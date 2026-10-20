@@ -381,8 +381,7 @@ fn amendment_sequence_preserves_conservation_invariant() {
 
     // add 700, then reduce the appended milestone back to 200.
     escrow.add_milestone(&client_addr, &freelancer_addr, &700_i128);
-    escrow
-        .reduce_milestone(&client_addr, &freelancer_addr, &2u32, &200_i128);
+    escrow.reduce_milestone(&client_addr, &freelancer_addr, &2u32, &200_i128);
 
     let meta = job_meta(&env, &contract_id);
     assert_eq!(meta.total_amount, 3_200);
