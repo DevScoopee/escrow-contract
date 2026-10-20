@@ -53,15 +53,29 @@ jobs:
         run: python3 scripts/check-orphan-test-modules.py
 
       - name: Format check
-        # TEMP DIAGNOSTIC: emit rustfmt diff as ::error:: annotations, then fail.
+        # TEMP DIAGNOSTIC: surface rustfmt diff via commit statuses + annotations, then fail.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set +e
-          cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check 2>/tmp/fmt.err
+          status() {
+            curl -s -o /dev/null -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+              -d "$(python3 -c 'import json,sys; print(json.dumps({"context": sys.argv[1], "state": "failure", "description": sys.argv[2][:145]}))' "$1" "$2")"
+          }
+          status fmt/00 "reached-format-step"
+          cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check > /tmp/fmt.log 2>&1
           rc=$?
-          sed -e 's/\x1b\[[0-9;]*m//g' -e 's/%/%25/g' /tmp/fmt.err | grep -v '^Diff in' | head -n 40 | while IFS= read -r l; do
-            [ -n "$l" ] && echo "::error::FMT| ${l:0:180}"
+          sed -e 's/\x1b\[[0-9;]*m//g' /tmp/fmt.log > /tmp/fmt.clean
+          status fmt/01 "rc=$rc bytes=$(wc -c < /tmp/fmt.clean) diffs=$(grep -c '^Diff in' /tmp/fmt.clean)"
+          i=2
+          grep -v '^Diff in' /tmp/fmt.clean | sed -e 's/^/|/' | tr -d '\t' | head -c 1200 | awk -v n="$i" 'BEGIN{RS="[|]"} NF{printf "CHUNK%02d@%s\n", n++, $0}' | while IFS=@ read -r tag chunk; do
+            status "fmt/$tag" "${chunk:0:140}"
           done
-          grep '^Diff in' /tmp/fmt.err | head -n 20 | while IFS= read -r l; do echo "::error::FMTFILE| ${l:0:180}"; done
+          grep '^Diff in' /tmp/fmt.clean | head -n 10 | while IFS= read -r l; do echo "::error::${l:0:180}"; done
           exit $rc
 
       - name: Clippy
