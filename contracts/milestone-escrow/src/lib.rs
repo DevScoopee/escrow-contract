@@ -35,6 +35,10 @@ const MAX_EMERGENCY_ALLOCATION_PARTIES: u32 = 255;
 /// Default window before either party may return an unresolved dispute to its
 /// pre-dispute milestone state.
 pub const DISPUTE_TIMEOUT_SECONDS: u64 = 30 * 24 * 60 * 60;
+/// Maximum number of milestones `approve_milestones` accepts in one call.
+/// Validation does a duplicate scan over the index list, so the cap bounds
+/// its worst-case CPU cost along with the per-milestone storage writes.
+const MAX_BATCH_APPROVALS: u32 = 10;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -514,16 +518,13 @@ pub struct ExcessSweptEvent {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Emitted by `fund`. Static job data (freelancer, arbiter, token, milestone
+/// count, auto-release window) is in `InitializedEvent`; consumers join on
+/// the contract ID instead of having it repeated here (#742).
 pub struct FundedEvent {
     pub contract_id: Address,
     pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Address,
-    pub token: Address,
     pub total_amount: i128,
-    pub milestone_count: u32,
-    pub auto_release_seconds: u64,
-    pub funded: bool,
 }
 
 #[contracttype]
@@ -569,28 +570,24 @@ pub struct DeadlineExtendedEvent {
     pub new_deadline: u64,
 }
 
+/// Emitted once per approved milestone by `approve_partial`,
+/// `approve_milestone` and `approve_milestones`.
+///
+/// Carries only what the approval changed. Parties, token, milestone count,
+/// total and auto-release window never change after `initialize` and are in
+/// `InitializedEvent`; consumers join on the contract ID (#742).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovedEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Address,
-    pub token: Address,
-    /// Gross milestone amount (before any partial releases).
+    /// Amount released to the freelancer by this approval.
     pub amount: i128,
     /// Cumulative amount released including this approval.
     pub released_amount: i128,
     /// Remaining balance after this approval (always 0 on a full approval).
     pub remaining: i128,
     pub status: MilestoneStatus,
-    /// Total number of milestones in the contract.
-    pub milestone_count: u32,
-    /// Contract-level total amount across all milestones.
-    pub total_amount: i128,
-    /// Auto-release window configured for this escrow.
-    pub auto_release_seconds: u64,
 }
 
 #[contracttype]
@@ -605,6 +602,8 @@ pub struct DisputeRaisedEvent {
     pub new_status: MilestoneStatus,
 }
 
+/// Emitted by `resolve_dispute` and `apply_dispute_arbitration_split`.
+/// Client, freelancer and token are in `InitializedEvent` (#742).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeEscalatedEvent {
@@ -621,9 +620,6 @@ pub struct DisputeResolvedEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
     pub arbiter: Address,
-    pub client: Address,
-    pub freelancer: Address,
-    pub token: Address,
     /// Amount owed on the milestone at the time of resolution (before
     /// capping to the contract's available balance).
     pub amount: i128,
@@ -811,6 +807,10 @@ pub struct EscrowInterestYieldState {
 pub struct ClaimedEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
+    /// Address that triggered the release. Equal to `freelancer` for
+    /// `claim_auto_release`; for `trigger_auto_release` it is the
+    /// self-reported, unauthenticated caller (attribution only).
+    pub caller: Address,
     pub freelancer: Address,
     pub token: Address,
     pub amount: i128,
@@ -3454,13 +3454,7 @@ impl MilestoneEscrow {
             FundedEvent {
                 contract_id: env.current_contract_address(),
                 client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
                 total_amount,
-                milestone_count: meta.milestone_count,
-                auto_release_seconds: meta.auto_release_seconds,
-                funded: meta.funded,
             },
         );
 
@@ -3923,6 +3917,10 @@ impl MilestoneEscrow {
     /// No loop over all milestones is performed here.  Functions that do loop
     /// over all milestones (`checked_job_total`, `assemble_job`) are
     /// intentionally not called from this hot path.
+    ///
+    /// The payout always goes to the job's freelancer, so the signature only
+    /// attributes the claim; `trigger_auto_release` performs the same release
+    /// without it.
     pub fn claim_auto_release(
         env: Env,
         freelancer: Address,
@@ -3952,13 +3950,66 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
 
+        Self::release_overdue_milestone(&env, &meta, freelancer, milestone_index)
+    }
+
+    /// Permissionless auto-release of an overdue milestone (#740).
+    ///
+    /// Anyone (a keeper bot, a scheduled backend job, the freelancer, the
+    /// client) may call this once a milestone's auto-release deadline has
+    /// passed. No signature is required because the call cannot redirect
+    /// funds: the remaining balance is always transferred to the job's stored
+    /// freelancer, exactly as in `claim_auto_release`, and every other check
+    /// (pause and execution guards, index, `Delivered` status, deadline,
+    /// remaining > 0) is identical.
+    ///
+    /// # Parameters
+    /// * `caller`          – Recorded in the `claim` event for attribution.
+    ///                       It is **not** authenticated, so indexers must
+    ///                       not treat it as proof of who submitted the
+    ///                       transaction.
+    /// * `milestone_index` – Index of the milestone to release.
+    ///
+    /// # Errors
+    /// * `Paused`            – The contract is emergency-paused.
+    /// * `NotInitialized`    – Contract has not been initialized.
+    /// * `InvalidMilestone`  – `milestone_index` is out of range.
+    /// * `InvalidStatus`     – The milestone is not currently `Delivered`.
+    /// * `DeadlineNotPassed` – The auto-release deadline has not passed yet.
+    /// * `InvalidAmount`     – The milestone's remaining balance is not
+    ///                         positive.
+    pub fn trigger_auto_release(
+        env: Env,
+        caller: Address,
+        milestone_index: u32,
+    ) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+        let meta = Self::load_job_meta(&env)?;
+
+        Self::release_overdue_milestone(&env, &meta, caller, milestone_index)
+    }
+
+    /// Shared body of `claim_auto_release` and `trigger_auto_release`: every
+    /// milestone-level check, the state commit, and the payout to
+    /// `meta.freelancer`. Callers run the guards and any caller checks first.
+    fn release_overdue_milestone(
+        env: &Env,
+        meta: &JobMeta,
+        caller: Address,
+        milestone_index: u32,
+    ) -> Result<(), Error> {
         // CHECK 1: Validate index boundary.
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
-        let mut milestone = Self::load_milestone(&env, milestone_index)?;
-        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
+        let mut milestone = Self::load_milestone(env, milestone_index)?;
+        Self::require_milestone_is_funded(env, meta, &milestone)?;
 
         // CHECK 2: Milestone must be in the Delivered state.  Any other status —
         // including Released (double-claim), Disputed, Refunded, Pending, or
@@ -3973,10 +4024,10 @@ impl MilestoneEscrow {
         //    the persistent Milestone entry so that entries written before this
         //    migration remain fully functional.
         let delivered_at =
-            Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
-        let extension = Self::load_time_extension(&env, milestone_index);
+            Self::load_delivered_at(env, milestone_index).unwrap_or(milestone.delivered_at);
+        let extension = Self::load_time_extension(env, milestone_index);
 
-        let deadline = Self::auto_release_deadline(&meta, delivered_at, extension)?;
+        let deadline = Self::auto_release_deadline(meta, delivered_at, extension)?;
         let current = env.ledger().timestamp();
         if current < deadline {
             return Err(Error::DeadlineNotPassed);
@@ -4000,22 +4051,23 @@ impl MilestoneEscrow {
         //    be rejected before it can touch the token contract.
         milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Released;
-        Self::store_milestone(&env, milestone_index, &milestone);
-        Self::increment_reputation(&env, &meta.client);
-        Self::increment_reputation(&env, &meta.freelancer);
+        Self::store_milestone(env, milestone_index, &milestone);
+        Self::increment_reputation(env, &meta.client);
+        Self::increment_reputation(env, &meta.freelancer);
 
         // INTERACTION: Token transfer is the sole external call and executes only
         //    after all state mutations have been durably persisted.
-        let token_client = token::Client::new(&env, &meta.token);
-        Self::pay_or_credit(&env, &token_client, &meta.freelancer, &remaining)?;
+        let token_client = token::Client::new(env, &meta.token);
+        Self::pay_or_credit(env, &token_client, &meta.freelancer, &remaining)?;
 
         env.events().publish(
             (symbol_short!("claim"),),
             ClaimedEvent {
                 contract_id: env.current_contract_address(),
                 milestone_index,
-                freelancer: meta.freelancer,
-                token: meta.token,
+                caller,
+                freelancer: meta.freelancer.clone(),
+                token: meta.token.clone(),
                 amount: remaining,
             },
         );
@@ -4186,17 +4238,10 @@ impl MilestoneEscrow {
             ApprovedEvent {
                 contract_id: env.current_contract_address(),
                 milestone_index,
-                client: meta.client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
                 amount,
                 released_amount: updated_milestone.released_amount,
                 remaining: event_remaining,
                 status: updated_milestone.status.clone(),
-                milestone_count: meta.milestone_count,
-                total_amount: meta.total_amount,
-                auto_release_seconds: meta.auto_release_seconds,
             },
         );
 
@@ -4296,17 +4341,10 @@ impl MilestoneEscrow {
             ApprovedEvent {
                 contract_id: env.current_contract_address(),
                 milestone_index,
-                client: meta.client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
                 amount: remaining,
                 released_amount: milestone.released_amount,
                 remaining: event_remaining,
                 status: milestone.status.clone(),
-                milestone_count: meta.milestone_count,
-                total_amount: meta.total_amount,
-                auto_release_seconds: meta.auto_release_seconds,
             },
         );
 
@@ -4357,6 +4395,141 @@ impl MilestoneEscrow {
                 amount,
             },
         );
+
+        Ok(())
+    }
+
+    /// Approve several delivered milestones in one transaction (#741).
+    ///
+    /// Releases the full remaining balance of every listed milestone with a
+    /// **single** token transfer of the summed amount, marks each one
+    /// `Released`, increments both parties' reputation once per milestone
+    /// (as `approve_milestone` would), and emits one `approve` event per
+    /// milestone, in the order given.
+    ///
+    /// The call is all-or-nothing: every index is validated before any state
+    /// is written, and any invalid, duplicated or ineligible index fails the
+    /// whole call with nothing released.
+    ///
+    /// Unlike `approve_milestone`, a `PartiallyReleased` milestone is
+    /// accepted too; its outstanding remainder is what gets released.
+    ///
+    /// # Parameters
+    /// * `client`  – Must match the job's stored client. Must authorize the
+    ///               call.
+    /// * `indices` – Milestones to approve: 1 to `MAX_BATCH_APPROVALS` (10)
+    ///               distinct indices.
+    ///
+    /// # Errors
+    /// * `Paused`           – The contract is emergency-paused.
+    /// * `InvalidAddress`   – `client` is a zero address.
+    /// * `NotInitialized`   – Contract has not been initialized.
+    /// * `Unauthorized`     – `client` does not match the job's client.
+    /// * `NotFunded`        – The escrow has not been funded yet.
+    /// * `InvalidMilestone` – `indices` is empty, longer than the cap,
+    ///                        contains a duplicate, or contains an
+    ///                        out-of-range index.
+    /// * `InvalidStatus`    – A listed milestone is not `Delivered` or
+    ///                        `PartiallyReleased`.
+    /// * `InvalidAmount`    – A listed milestone's remaining balance is not
+    ///                        positive, or the sum overflows.
+    pub fn approve_milestones(env: Env, client: Address, indices: Vec<u32>) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+        let zero_account = Address::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        );
+        let zero_contract = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
+        if client == zero_account || client == zero_contract {
+            return Err(Error::InvalidAddress);
+        }
+
+        client.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+
+        if meta.client != client {
+            return Err(Error::Unauthorized);
+        }
+        Self::require_escrow_has_funding(&env, &meta)?;
+
+        let count = indices.len();
+        if count == 0 || count > MAX_BATCH_APPROVALS {
+            return Err(Error::InvalidMilestone);
+        }
+
+        // CHECKS: validate every index and sum the payout before writing
+        // anything, so a bad entry anywhere in the list leaves state untouched.
+        let mut milestones: Vec<Milestone> = Vec::new(&env);
+        let mut released: Vec<i128> = Vec::new(&env);
+        let mut total: i128 = 0;
+        for (position, milestone_index) in indices.iter().enumerate() {
+            if milestone_index >= meta.milestone_count {
+                return Err(Error::InvalidMilestone);
+            }
+            // `count` is capped at MAX_BATCH_APPROVALS, so this scan is bounded.
+            for earlier in indices.iter().take(position) {
+                if earlier == milestone_index {
+                    return Err(Error::InvalidMilestone);
+                }
+            }
+
+            let milestone = Self::load_milestone(&env, milestone_index)?;
+            Self::require_milestone_is_funded(&env, &meta, &milestone)?;
+            if milestone.status != MilestoneStatus::Delivered
+                && milestone.status != MilestoneStatus::PartiallyReleased
+            {
+                return Err(Error::InvalidStatus);
+            }
+            let remaining = milestone
+                .amount
+                .checked_sub(milestone.released_amount)
+                .ok_or(Error::InvalidAmount)?;
+            if remaining <= 0 {
+                return Err(Error::InvalidAmount);
+            }
+            total = total.checked_add(remaining).ok_or(Error::InvalidAmount)?;
+            milestones.push_back(milestone);
+            released.push_back(remaining);
+        }
+
+        // EFFECTS: commit every milestone's terminal state before the
+        // transfer (Checks-Effects-Interactions).
+        for (milestone_index, mut milestone) in indices.iter().zip(milestones.iter()) {
+            milestone.released_amount = milestone.amount;
+            milestone.status = MilestoneStatus::Released;
+            Self::store_milestone(&env, milestone_index, &milestone);
+            Self::store_milestone_released(&env, milestone_index);
+            Self::increment_reputation(&env, &meta.client);
+            Self::increment_reputation(&env, &meta.freelancer);
+        }
+
+        // INTERACTION: one transfer for the whole batch.
+        let token_client = token::Client::new(&env, &meta.token);
+        Self::pay_or_credit(&env, &token_client, &meta.freelancer, &total)?;
+
+        for (milestone_index, (milestone, amount)) in
+            indices.iter().zip(milestones.iter().zip(released.iter()))
+        {
+            env.events().publish(
+                (symbol_short!("approve"),),
+                ApprovedEvent {
+                    contract_id: env.current_contract_address(),
+                    milestone_index,
+                    amount,
+                    released_amount: milestone.amount,
+                    remaining: 0,
+                    status: MilestoneStatus::Released,
+                },
+            );
+        }
 
         Ok(())
     }
@@ -4734,9 +4907,6 @@ impl MilestoneEscrow {
                 contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
-                client: meta.client.clone(),
-                freelancer: meta.freelancer.clone(),
-                token: meta.token.clone(),
                 // `amount` is what was owed before capping to the available
                 // balance; `paid_amount` is what actually moved.
                 amount: remaining,
@@ -4988,9 +5158,6 @@ impl MilestoneEscrow {
                 contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
-                client: meta.client.clone(),
-                freelancer: meta.freelancer.clone(),
-                token: meta.token.clone(),
                 amount: remaining,
                 paid_amount,
                 released_to_freelancer: freelancer_payout > 0,
@@ -8020,6 +8187,8 @@ pub(crate) fn test_spec_hashes(env: &Env, amounts: &Vec<i128>) -> Vec<BytesN<32>
 mod tests;
 #[cfg(test)]
 pub(crate) use tests as test;
+#[cfg(test)]
+pub(crate) use tests::testutils;
 
 // ── escrow_interest_yield: admin emergency override endpoints ─────────────────
 //

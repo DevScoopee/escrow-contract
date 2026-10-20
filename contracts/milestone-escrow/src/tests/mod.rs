@@ -16,6 +16,7 @@ mod admin_resume_escrow_footprint_tests;
 mod admin_set_yield_rate_tests;
 mod admin_tax_withholding_guards_tests;
 mod admin_transfer_target_tests;
+mod approve_milestones_tests;
 mod arbitration_split_event_tests;
 mod cancel_admin_transfer_tests;
 mod cancel_escrow_split_refund_guards_tests;
@@ -84,7 +85,9 @@ mod tax_withholding_split_refund_tests;
 mod tax_withholding_tests;
 mod test_emergency_pause;
 mod test_payment_streaming_milestones;
+pub(crate) mod testutils;
 mod time_until_auto_release_tests;
+mod trigger_auto_release_tests;
 mod unlock_escrow_interest_yield_event_tests;
 mod version_tests;
 mod whitelist_management_error_paths_tests;
@@ -1471,9 +1474,6 @@ fn test_resolve_dispute_emits_structured_event() {
                         contract_id: contract_id.clone(),
                         milestone_index: 0,
                         arbiter: arbiter_addr.clone(),
-                        client: client_addr.clone(),
-                        freelancer: freelancer_addr.clone(),
-                        token: token_contract_id.clone(),
                         amount: 1_000,
                         paid_amount: 1_000,
                         released_to_freelancer: true,
@@ -1682,13 +1682,7 @@ fn test_fund_emits_structured_event() {
                     FundedEvent {
                         contract_id: contract_id.clone(),
                         client: client_addr.clone(),
-                        freelancer: freelancer_addr.clone(),
-                        arbiter: arbiter_addr.clone(),
-                        token: token_contract_id.clone(),
                         total_amount: 3_000,
-                        milestone_count: 2,
-                        auto_release_seconds: 604800,
-                        funded: true,
                     }
                 );
             }
