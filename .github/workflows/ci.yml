@@ -53,7 +53,16 @@ jobs:
         run: python3 scripts/check-orphan-test-modules.py
 
       - name: Format check
-        run: cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check
+        # TEMP DIAGNOSTIC: emit rustfmt diff as ::error:: annotations, then fail.
+        run: |
+          set +e
+          cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check 2>/tmp/fmt.err
+          rc=$?
+          sed -e 's/\x1b\[[0-9;]*m//g' -e 's/%/%25/g' /tmp/fmt.err | grep -v '^Diff in' | head -n 40 | while IFS= read -r l; do
+            [ -n "$l" ] && echo "::error::FMT| ${l:0:180}"
+          done
+          grep '^Diff in' /tmp/fmt.err | head -n 20 | while IFS= read -r l; do echo "::error::FMTFILE| ${l:0:180}"; done
+          exit $rc
 
       - name: Clippy
         run: cargo clippy --manifest-path contracts/milestone-escrow/Cargo.toml --all-targets -- -D warnings
