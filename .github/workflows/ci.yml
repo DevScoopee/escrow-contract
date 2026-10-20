@@ -76,7 +76,14 @@ jobs:
             status "fmt/$tag" "${chunk:0:140}"
           done
           grep '^Diff in' /tmp/fmt.clean | head -n 10 | while IFS= read -r l; do echo "::error::FILE|${l:0:180}"; done
-          sed -n '/^Diff in/,/^$/p' /tmp/fmt.clean | tr '\t' '~' | awk '{printf "::error::D%03d>%s\n", NR, $0}' | head -n 95
+          base64 -w 76 /tmp/fmt.clean > /tmp/fmt.b64
+          seq=0
+          while IFS= read -r l; do
+            seq=$((seq + 1))
+            echo "::error::B64 ${seq} ${l}"
+            [ "$seq" -ge 40 ] && break
+          done < /tmp/fmt.b64
+          echo "::error::DONE|lines=$seq total=$(wc -l < /tmp/fmt.b64)"
           exit $rc
 
       - name: Clippy
