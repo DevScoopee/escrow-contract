@@ -64,7 +64,7 @@ jobs:
           sed -e 's/\x1b\[[0-9;]*m//g' /tmp/fmt.log > /tmp/fmt.clean
           python3 -c 'import base64; open("/tmp/fmt.b64","w").write(base64.b64encode(open("/tmp/fmt.clean","rb").read()).decode())'
           echo "::error::META| rc=$rc bytes=$(wc -c < /tmp/fmt.clean) hunks=$(grep -c '^Diff in' /tmp/fmt.clean) b64lines=$(wc -l < /tmp/fmt.b64)"
-          n=9; fold -w 1000 /tmp/fmt.b64 | tail -n +10 | head -n 9 | while IFS= read -r l; do n=$((n+1)); echo "::error::Q${n} ${l}"; done
+          n=9; fold -w 1000 /tmp/fmt.b64 | head -n 9 | while IFS= read -r l; do n=$((n+1)); echo "::error::Q${n} ${l}"; done
           exit $rc
 
       - name: Clippy
