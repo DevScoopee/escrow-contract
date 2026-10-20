@@ -59,27 +59,12 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set +e
-          status() {
-            curl -s -o /dev/null -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
-              -d "$(python3 -c 'import json,sys; print(json.dumps({"context": sys.argv[1], "state": "failure", "description": sys.argv[2][:145]}))' "$1" "$2")"
-          }
-          status fmt/00 "reached-format-step"
           cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check > /tmp/fmt.log 2>&1
           rc=$?
           sed -e 's/\x1b\[[0-9;]*m//g' /tmp/fmt.log > /tmp/fmt.clean
-          status fmt/01 "rc=$rc bytes=$(wc -c < /tmp/fmt.clean) diffs=$(grep -c '^Diff in' /tmp/fmt.clean)"
-          i=2
-          grep -v '^Diff in' /tmp/fmt.clean | sed -e 's/^/|/' | tr -d '\t' | head -c 1200 | awk -v n="$i" 'BEGIN{RS="[|]"} NF{printf "CHUNK%02d@%s\n", n++, $0}' | while IFS=@ read -r tag chunk; do
-            status "fmt/$tag" "${chunk:0:140}"
-          done
-          grep '^Diff in' /tmp/fmt.clean | head -n 10 | while IFS= read -r l; do echo "::error::FILE|${l:0:180}"; done
-          echo "b64bin=$(command -v base64 || echo MISSING)" | sed 's/^/::error::ENV|/'
-          python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64encode(open("/tmp/fmt.clean","rb").read()))' > /tmp/fmt.b64
-          n=0; fold -w 120 /tmp/fmt.b64 | while IFS= read -r l; do n=$((n+1)); echo "::error::P${n} ${l}"; done
-          echo "::error::END|done"
+          python3 -c 'import base64; open("/tmp/fmt.b64","w").write(base64.b64encode(open("/tmp/fmt.clean","rb").read()).decode())'
+          echo "::error::META| rc=$rc bytes=$(wc -c < /tmp/fmt.clean) hunks=$(grep -c '^Diff in' /tmp/fmt.clean) b64lines=$(wc -l < /tmp/fmt.b64)"
+          n=0; fold -w 1000 /tmp/fmt.b64 | head -n 9 | while IFS= read -r l; do n=$((n+1)); echo "::error::P${n} ${l}"; done
           exit $rc
 
       - name: Clippy
