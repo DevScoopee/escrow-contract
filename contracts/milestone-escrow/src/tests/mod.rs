@@ -295,19 +295,21 @@ fn setup_escrow_inner(
     let total: i128 = milestone_amounts.iter().sum();
     token_admin.mint(&client_addr, &total);
 
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(env, &contract_id);
-
-    client.initialize(
-        &admin_addr,
-        &client_addr,
-        &freelancer_addr,
-        &arbiter_addr,
-        &token_contract_id,
-        &604800,
-        &milestone_amounts,
-        &crate::spec_hashes_for(&milestone_amounts),
+    let spec_hashes = crate::spec_hashes_for(&milestone_amounts);
+    let contract_id = env.register(
+        MilestoneEscrow,
+        (
+            admin_addr.clone(),
+            client_addr.clone(),
+            freelancer_addr.clone(),
+            arbiter_addr.clone(),
+            token_contract_id.clone(),
+            604800u64,
+            milestone_amounts,
+            spec_hashes,
+        ),
     );
+    let client = MilestoneEscrowClient::new(env, &contract_id);
     client.accept_job(&freelancer_addr);
     client.accept_arbiter(&arbiter_addr);
     if funded {
