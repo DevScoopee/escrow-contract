@@ -12,6 +12,8 @@ use soroban_sdk::{
     ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
 };
 
+pub mod math;
+
 /// Maximum number of ratio slots accepted by `compute_ratio_allocation`.
 /// A multisig setup with more than this many signers is operationally
 /// unreasonable and would impose unbounded per-transaction CPU costs; the cap
@@ -2184,21 +2186,10 @@ impl MilestoneEscrow {
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
-        if total < 0 || numerator < 0 || denominator <= 0 || numerator > denominator {
-            return Err(Error::InvalidRatio);
-        }
-
-        let scaled = total.checked_mul(numerator).ok_or(Error::InvalidAmount)?;
-        let half = denominator / 2;
-        let rounded = scaled.checked_add(half).ok_or(Error::InvalidAmount)? / denominator;
-
-        if rounded > total {
-            return Err(Error::InvalidAmount);
-        }
-
+        let (first, second) = math::split_ratio_nearest(total, numerator, denominator)?;
         Ok(RatioSplit {
-            first: rounded,
-            second: total.checked_sub(rounded).ok_or(Error::InvalidAmount)?,
+            first,
+            second,
         })
     }
 
@@ -4783,21 +4774,8 @@ impl MilestoneEscrow {
         total_amount: i128,
         client_refund_bps: u32,
     ) -> Result<RefundAllocation, Error> {
-        if total_amount < 0 {
-            return Err(Error::InvalidAmount);
-        }
-        if client_refund_bps > BPS_SCALE {
-            return Err(Error::InvalidRatio);
-        }
-
-        let scale = BPS_SCALE as i128;
-        let client_refund = total_amount
-            .checked_mul(client_refund_bps as i128)
-            .ok_or(Error::InvalidAmount)?
-            / scale;
-        let freelancer_payout = total_amount
-            .checked_sub(client_refund)
-            .ok_or(Error::InvalidAmount)?;
+        let (client_refund, freelancer_payout) =
+            math::split_bps(total_amount, client_refund_bps, math::Rounding::Floor)?;
 
         Ok(RefundAllocation {
             client_refund,
@@ -6626,73 +6604,10 @@ impl MilestoneEscrow {
         total_amount: i128,
         ratios: Vec<i128>,
     ) -> Result<Vec<i128>, Error> {
-        // A zero total has no meaningful allocation.
-        if total_amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        if ratios.is_empty() {
-            return Err(Error::InvalidRatio);
-        }
-
         if ratios.len() > MAX_MULTISIG_RATIO_COUNT {
             return Err(Error::InvalidAmount);
         }
-
-        let mut ratio_sum: i128 = 0;
-        for ratio in ratios.iter() {
-            if ratio < 0 {
-                return Err(Error::InvalidRatio);
-            }
-            ratio_sum = ratio_sum.checked_add(ratio).ok_or(Error::InvalidRatio)?;
-        }
-
-        if ratio_sum <= 0 {
-            return Err(Error::InvalidRatio);
-        }
-
-        let mut allocations: Vec<i128> = Vec::new(&env);
-        let mut remainders: Vec<i128> = Vec::new(&env);
-        let mut allocated_total: i128 = 0;
-
-        for ratio in ratios.iter() {
-            let weighted = total_amount
-                .checked_mul(ratio)
-                .ok_or(Error::InvalidAmount)?;
-            let base = weighted / ratio_sum;
-            let rem = weighted % ratio_sum;
-
-            allocations.push_back(base);
-            remainders.push_back(rem);
-            allocated_total = allocated_total
-                .checked_add(base)
-                .ok_or(Error::InvalidAmount)?;
-        }
-
-        let remaining = total_amount
-            .checked_sub(allocated_total)
-            .ok_or(Error::InvalidAmount)?;
-
-        for _ in 0..remaining {
-            let mut best_index: u32 = 0;
-            let mut best_remainder: i128 = i128::MIN;
-
-            for (idx, rem) in remainders.iter().enumerate() {
-                if rem > best_remainder {
-                    best_remainder = rem;
-                    best_index = idx as u32;
-                }
-            }
-
-            let current = allocations.get(best_index).ok_or(Error::InvalidAmount)?;
-            allocations.set(
-                best_index,
-                current.checked_add(1).ok_or(Error::InvalidAmount)?,
-            );
-            remainders.set(best_index, i128::MIN);
-        }
-
-        Ok(allocations)
+        math::allocate_weights(&env, total_amount, &ratios)
     }
 
     // ── multisig approval: storage-optimised key design ────────────────────
