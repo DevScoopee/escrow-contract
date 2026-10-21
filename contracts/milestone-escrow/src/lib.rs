@@ -1696,7 +1696,12 @@ impl MilestoneEscrow {
     }
 
     fn ensure_not_paused(env: &Env) -> Result<(), Error> {
-        if Self::read_emergency_paused(env) {
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+        if paused || Self::read_emergency_paused(env) {
             return Err(Error::Paused);
         }
         let cancel_locked = env
@@ -2824,6 +2829,33 @@ impl MilestoneEscrow {
     ///   practice this indicates an internal SDK-level error rather than a
     ///   caller mistake.
     #[allow(clippy::too_many_arguments)]
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        token: Address,
+        auto_release_seconds: u64,
+        milestone_amounts: Vec<i128>,
+        milestone_spec_hashes: Vec<BytesN<32>>,
+    ) -> Result<(), Error> {
+        Self::initialize_inner(
+            env,
+            admin,
+            client,
+            freelancer,
+            arbiter,
+            token,
+            auto_release_seconds,
+            DISPUTE_TIMEOUT_SECONDS,
+            milestone_amounts,
+            milestone_spec_hashes,
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -2903,27 +2935,7 @@ impl MilestoneEscrow {
             return Err(Error::AlreadyInitialized);
         }
 
-        // Write a sentinel immediately to prevent reentrancy: any reentrant
-        // call to `initialize` will now see `DataKey::Job` already present and
-        // return `AlreadyInitialized` before touching any other state.
-        // The sentinel is a zero-value `JobMeta` placeholder; the real meta
-        // overwrites it at the end of this function once all validation has
-        // passed and milestones have been stored.
         let created_at = env.ledger().timestamp();
-        env.storage().instance().set(
-            &DataKey::Job,
-            &JobMeta {
-                client: admin.clone(),
-                freelancer: admin.clone(),
-                arbiter: admin.clone(),
-                token: admin.clone(),
-                created_at,
-                funded: false,
-                auto_release_seconds: 0,
-                milestone_count: 0,
-                total_amount: 0,
-            },
-        );
 
         Self::validate_address(&env, &admin)?;
         Self::validate_address(&env, &client)?;
@@ -3069,7 +3081,7 @@ impl MilestoneEscrow {
         milestone_spec_hashes: Vec<BytesN<32>>,
         funding_mode: FundingMode,
     ) -> Result<(), Error> {
-        Self::initialize(
+        Self::__constructor(
             env.clone(),
             admin,
             client,

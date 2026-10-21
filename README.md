@@ -8,20 +8,20 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 
 ## Trust Model
 
-The escrow's protection depends on **four distinct roles** assigned at `initialize` time:
+The escrow's protection depends on **four distinct roles** assigned at deploy time via `__constructor`:
 
 - **Admin** — the platform operator. Holds admin-only endpoints (whitelist management, pause/resume, admin overrides, upgrades). The admin is expected to be a neutral platform address, not the client or freelancer.
 - **Client** — funds the job and approves milestone releases.
 - **Freelancer** — delivers milestones and receives payouts.
 - **Arbiter** — a neutral third party that resolves disputes via `resolve_dispute` and `apply_dispute_arbitration_split`.
 
-`initialize` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
+`__constructor` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
 ## Contract Functions
 
 | Function | Caller | Description |
 |---|---|---|
-| `initialize` | Anyone | Set up job with milestone amounts and spec hashes, a 30-day dispute timeout and Upfront funding |
+| `__constructor` | Deployer | Atomically initializes job with milestone amounts, spec hashes, 30-day dispute timeout and Upfront funding |
 | `initialize_with_dispute_timeout` | Anyone | Set up job with a custom, non-zero dispute timeout |
 | `initialize_with_funding_mode` | Anyone | Set up job with Upfront or PerMilestone funding |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
@@ -108,7 +108,16 @@ scripts/build-reproducible.sh
 stellar contract deploy \
   --wasm dist/milestone_escrow.wasm \
   --network testnet \
-  --source <your-account>
+  --source <your-account> \
+  -- \
+  --admin <admin-address> \
+  --client <client-address> \
+  --freelancer <freelancer-address> \
+  --arbiter <arbiter-address> \
+  --token <token-address> \
+  --auto_release_seconds 604800 \
+  --milestone_amounts '["1000000"]' \
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
 ```
 
 Then record the contract ID, `source_commit` and `wasm_sha256` from
