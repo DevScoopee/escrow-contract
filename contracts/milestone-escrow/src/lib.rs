@@ -1642,11 +1642,17 @@ impl MilestoneEscrow {
         Ok(meta)
     }
 
+    /// The one "has `initialize` run?" predicate. `DataKey::Job` is written by
+    /// every initialisation path and is what `load_job_meta` reads, so it is
+    /// the marker; do not test `Admin` or `Version` ad hoc.
+    fn is_initialized(env: &Env) -> bool {
+        env.storage().instance().has(&DataKey::Job)
+    }
+
     /// Reject the call before any other ledger access if the contract has not
-    /// been initialised. `initialize` is the only path that sets
-    /// `DataKey::Version`, so its presence is the initialisation marker.
+    /// been initialised.
     fn require_initialized(env: &Env) -> Result<(), Error> {
-        if !env.storage().instance().has(&DataKey::Version) {
+        if !Self::is_initialized(env) {
             return Err(Error::NotInitialized);
         }
         Ok(())
@@ -1966,11 +1972,12 @@ impl MilestoneEscrow {
     ///
     /// **This function must contain only read operations.**
     fn load_multisig_locked(env: &Env) -> Result<bool, Error> {
-        let storage = env.storage().instance();
-        if !storage.has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
-        Ok(storage.get(&DataKey::MultisigLocked).unwrap_or(false))
+        Self::require_initialized(env)?;
+        Ok(env
+            .storage()
+            .instance()
+            .get(&DataKey::MultisigLocked)
+            .unwrap_or(false))
     }
 
     fn store_interest_yield_state(env: &Env, state: &EscrowInterestYieldState) {
@@ -3123,7 +3130,7 @@ impl MilestoneEscrow {
         current_admin.require_auth();
         // Footprint: a single read of DataKey::Admin serves both the
         // initialization guard and the authorization check. Previously this
-        // touched the entry twice — `has(&DataKey::Admin)` followed by
+        // touched the entry twice — a separate presence probe followed by
         // `load_admin()` (which also reads it). `load_admin` already returns
         // `NotInitialized` when the key is absent, so dropping the redundant
         // `has` keeps behavior identical (absent → NotInitialized, mismatch →
@@ -3297,21 +3304,13 @@ impl MilestoneEscrow {
     pub fn remove_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
         Self::require_admin(&env, &admin)?;
 
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-
         let meta = Self::load_job_meta(&env)?;
         if meta.funded {
             return Err(Error::AlreadyFunded);
         }
 
+        // Kept (unlike a bare lookup miss) so the zero sentinels still report
+        // `InvalidAddress` rather than `TokenNotWhitelisted`.
         let zero_account = Address::from_str(
             &env,
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -3327,40 +3326,35 @@ impl MilestoneEscrow {
         let mut whitelist: Vec<Address> =
             Self::cold_get(&env, &DataKey::WhitelistedTokens).ok_or(Error::NotInitialized)?;
 
-        let whitelist_len = whitelist.len();
-        if whitelist_len == 0 {
+        let len = whitelist.len();
+        if len == 0 {
             return Err(Error::TokenNotWhitelisted);
         }
-
-        let post_removal_len = whitelist_len.checked_sub(1).ok_or(Error::InvalidAmount)?;
-        if post_removal_len == 0 {
+        if len == 1 {
             return Err(Error::InvalidAmount);
         }
 
-        if !whitelist.contains(&token) {
-            return Err(Error::TokenNotWhitelisted);
+        let index = whitelist
+            .first_index_of(&token)
+            .ok_or(Error::TokenNotWhitelisted)?;
+
+        // Swap-remove: move the last element into the vacated slot.
+        let last = len - 1;
+        if index != last {
+            let last_elem = whitelist.get(last).ok_or(Error::TokenNotWhitelisted)?;
+            whitelist.set(index, last_elem);
         }
+        whitelist.pop_back();
+        env.storage()
+            .persistent()
+            .set(&DataKey::WhitelistedTokens, &whitelist);
 
-        if let Some(index) = whitelist.iter().position(|t| t == token) {
-            let last = whitelist.len() - 1;
-            if (index as u32) != last {
-                let last_elem = whitelist.get(last).unwrap();
-                whitelist.set(index as u32, last_elem);
-            }
-            whitelist.pop_back();
-            env.storage()
-                .persistent()
-                .set(&DataKey::WhitelistedTokens, &whitelist);
+        env.events().publish(
+            (symbol_short!("wldel"),),
+            TokenRemovedEvent { admin, token },
+        );
 
-            env.events().publish(
-                (symbol_short!("wldel"),),
-                TokenRemovedEvent { admin, token },
-            );
-
-            Ok(())
-        } else {
-            Err(Error::TokenNotWhitelisted)
-        }
+        Ok(())
     }
 
     /// Returns whether `token` is present in the stored whitelist.
@@ -5244,9 +5238,8 @@ impl MilestoneEscrow {
     ///   is moved to `Released` and its remaining balance is summed.
     /// - The total is transferred from the contract to the freelancer in a
     ///   single token call.
-    /// - The compact `C` lock is cleared so subsequent queries are unblocked.
-    /// - `YieldAccrued` is reset to zero (matches the pattern used by
-    ///   `admin_override_release` / `admin_override_refund`).
+    /// - The compact `C` lock entry is removed so subsequent queries are unblocked.
+    /// - `YieldAccrued` is removed (same as `admin_override_cancel_refund`).
     ///
     /// # Errors
     /// * `NotInitialized`  – Contract not initialised.
@@ -5255,66 +5248,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to pay out).
     pub fn admin_override_cancel_release(env: Env, admin: Address) -> Result<(), Error> {
-        Self::require_admin(&env, &admin)?;
-
-        // Only valid when a cancel lock is active.
-        let cancel_locked = env
-            .storage()
-            .instance()
-            .get::<_, bool>(&DataKey::CancelLock)
-            .unwrap_or(false);
-        if !cancel_locked {
-            return Err(Error::InvalidStatus);
-        }
-
-        let meta = Self::load_job_meta(&env)?;
-        Self::require_escrow_has_funding(&env, &meta)?;
-
-        // Walk every milestone; accumulate remaining balance and mark Released.
-        let mut total_released: i128 = 0;
-        for index in 0..meta.milestone_count {
-            let mut milestone = Self::load_milestone(&env, index)?;
-            if !Self::milestone_is_funded(&meta, &milestone) {
-                continue;
-            }
-            if milestone.status == MilestoneStatus::Released
-                || milestone.status == MilestoneStatus::Refunded
-            {
-                continue;
-            }
-            let remaining = milestone
-                .amount
-                .checked_sub(milestone.released_amount)
-                .ok_or(Error::InvalidAmount)?;
-            if remaining > 0 {
-                total_released = total_released
-                    .checked_add(remaining)
-                    .ok_or(Error::InvalidAmount)?;
-                milestone.released_amount = milestone.amount;
-                milestone.status = MilestoneStatus::Released;
-                // Write only the persistent Milestone entry.  The temporary
-                // MilestoneReleased flag is omitted here: it is a hot-read
-                // optimisation for the approve_milestone path and is redundant
-                // in this admin-override code path because the persistent
-                // status already carries the Released state.  Skipping it
-                // reduces the number of distinct ledger keys written by this
-                // function by one per updated milestone (issue #383).
-                Self::store_milestone(&env, index, &milestone);
-            }
-        }
-
-        if total_released <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        // CEI: clear the lock and reset yield before the external transfer.
-        env.storage().instance().set(&DataKey::CancelLock, &false);
-        env.storage()
-            .persistent()
-            .set(&DataKey::YieldAccrued, &0_i128);
-
-        let token_client = token::Client::new(&env, &meta.token);
-        Self::pay_or_credit(&env, &token_client, &meta.freelancer, &total_released)?;
+        let (meta, total_released) = Self::settle_all_remaining(&env, &admin, true)?;
 
         env.events().publish(
             (symbol_short!("adcovls"),),
@@ -5349,8 +5283,8 @@ impl MilestoneEscrow {
     ///   its remaining balance is summed.
     /// - The total is transferred from the contract to the client in a single
     ///   token call.
-    /// - The compact `C` lock is cleared.
-    /// - `YieldAccrued` is reset to zero.
+    /// - The compact `C` lock entry is removed.
+    /// - `YieldAccrued` is removed.
     ///
     /// # Errors
     /// * `NotInitialized`  – Contract not initialised.
@@ -5359,70 +5293,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to refund).
     pub fn admin_override_cancel_refund(env: Env, admin: Address) -> Result<(), Error> {
-        Self::require_admin(&env, &admin)?;
-
-        // Only valid when a cancel lock is active.
-        let cancel_locked = env
-            .storage()
-            .instance()
-            .get::<_, bool>(&DataKey::CancelLock)
-            .unwrap_or(false);
-        if !cancel_locked {
-            return Err(Error::InvalidStatus);
-        }
-
-        let meta = Self::load_job_meta(&env)?;
-        Self::require_escrow_has_funding(&env, &meta)?;
-
-        // Walk every milestone; accumulate remaining balance and mark Refunded.
-        let mut total_refunded: i128 = 0;
-        for index in 0..meta.milestone_count {
-            let mut milestone = Self::load_milestone(&env, index)?;
-            if !Self::milestone_is_funded(&meta, &milestone) {
-                continue;
-            }
-            if milestone.status == MilestoneStatus::Released
-                || milestone.status == MilestoneStatus::Refunded
-            {
-                continue;
-            }
-            let remaining = {
-                // Guard: both fields must be non-negative before arithmetic.
-                // A malformed entry with a negative amount or released_amount
-                // (e.g. i128::MIN) could yield a nonsensical positive
-                // `remaining` after wrapping; rejecting here keeps the
-                // guarantee that every exit path either refunds a valid
-                // positive total or returns Error::InvalidAmount (issue #386).
-                if milestone.amount < 0 || milestone.released_amount < 0 {
-                    return Err(Error::InvalidAmount);
-                }
-                milestone
-                    .amount
-                    .checked_sub(milestone.released_amount)
-                    .ok_or(Error::InvalidAmount)?
-            };
-            if remaining > 0 {
-                total_refunded = total_refunded
-                    .checked_add(remaining)
-                    .ok_or(Error::InvalidAmount)?;
-                milestone.released_amount = milestone.amount;
-                milestone.status = MilestoneStatus::Refunded;
-                Self::store_milestone(&env, index, &milestone);
-            }
-        }
-
-        if total_refunded <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        // CEI: clear the lock and reset yield before the external transfer.
-        env.storage().instance().remove(&DataKey::CancelLock);
-        if env.storage().persistent().has(&DataKey::YieldAccrued) {
-            env.storage().persistent().remove(&DataKey::YieldAccrued);
-        }
-
-        let token_client = token::Client::new(&env, &meta.token);
-        Self::pay_or_credit(&env, &token_client, &meta.client, &total_refunded)?;
+        let (meta, total_refunded) = Self::settle_all_remaining(&env, &admin, false)?;
 
         env.events().publish(
             (symbol_short!("adcovrf"),),
@@ -5436,6 +5307,93 @@ impl MilestoneEscrow {
         );
 
         Ok(())
+    }
+
+    /// Shared body of `admin_override_cancel_release` (`to_freelancer = true`)
+    /// and `admin_override_cancel_refund` (`to_freelancer = false`).
+    ///
+    /// Requires the admin and an active cancel lock, settles every
+    /// non-terminal milestone's remaining balance as `Released` or `Refunded`,
+    /// removes the `CancelLock` and `YieldAccrued` entries (so neither path
+    /// leaves a stale entry paying rent), then pays the total to the freelancer
+    /// or client. Negative `amount` / `released_amount` fields are rejected on
+    /// both paths (issue #386). Returns the job metadata and the total paid.
+    fn settle_all_remaining(
+        env: &Env,
+        admin: &Address,
+        to_freelancer: bool,
+    ) -> Result<(JobMeta, i128), Error> {
+        Self::require_admin(env, admin)?;
+
+        // Only valid when a cancel lock is active.
+        let cancel_locked = env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::CancelLock)
+            .unwrap_or(false);
+        if !cancel_locked {
+            return Err(Error::InvalidStatus);
+        }
+
+        let meta = Self::load_job_meta(env)?;
+        Self::require_escrow_has_funding(env, &meta)?;
+
+        let settled_status = if to_freelancer {
+            MilestoneStatus::Released
+        } else {
+            MilestoneStatus::Refunded
+        };
+
+        // Walk every milestone; accumulate remaining balance and mark settled.
+        let mut total: i128 = 0;
+        for index in 0..meta.milestone_count {
+            let mut milestone = Self::load_milestone(env, index)?;
+            if !Self::milestone_is_funded(&meta, &milestone) {
+                continue;
+            }
+            if milestone.status == MilestoneStatus::Released
+                || milestone.status == MilestoneStatus::Refunded
+            {
+                continue;
+            }
+            // Guard: a malformed entry with a negative amount or
+            // released_amount (e.g. i128::MIN) could yield a nonsensical
+            // positive `remaining`; reject it so every exit path either pays a
+            // valid positive total or returns Error::InvalidAmount.
+            if milestone.amount < 0 || milestone.released_amount < 0 {
+                return Err(Error::InvalidAmount);
+            }
+            let remaining = milestone
+                .amount
+                .checked_sub(milestone.released_amount)
+                .ok_or(Error::InvalidAmount)?;
+            if remaining > 0 {
+                total = total.checked_add(remaining).ok_or(Error::InvalidAmount)?;
+                milestone.released_amount = milestone.amount;
+                milestone.status = settled_status.clone();
+                // Only the persistent Milestone entry is written; the temporary
+                // MilestoneReleased flag is redundant here (issue #383).
+                Self::store_milestone(env, index, &milestone);
+            }
+        }
+
+        if total <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        // CEI: clear the lock and yield before the external transfer.
+        env.storage().instance().remove(&DataKey::CancelLock);
+        env.storage().persistent().remove(&DataKey::YieldAccrued);
+
+        let token_client = token::Client::new(env, &meta.token);
+        let recipient = if to_freelancer {
+            &meta.freelancer
+        } else {
+            &meta.client
+        };
+        Self::pay_or_credit(env, &token_client, recipient, &total)?;
+
+        Ok((meta, total))
     }
 
     /// Upgrade the contract's WASM to `new_wasm_hash`.
@@ -5617,9 +5575,7 @@ impl MilestoneEscrow {
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         admin.require_auth();
-        if !env.storage().persistent().has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
+        Self::require_initialized(&env)?;
         let stored_admin = Self::load_admin(&env)?;
         if stored_admin != admin {
             return Err(Error::Unauthorized);
@@ -7301,17 +7257,9 @@ impl MilestoneEscrow {
         }
 
         // No proposal: distinguish "initialized, nothing pending" from "never
-        // initialized".  `DataKey::Admin` is the canonical "has initialize()
-        // been called?" signal used by every other guarded endpoint
-        // (load_admin, load_job_meta, cancel_admin_transfer_proposal, etc.).
-        // We only test for its presence — `has` touches the entry once but,
-        // unlike `load_admin`, does not deserialize the admin address that is
-        // never used here.
-        if storage.has(&DataKey::Admin) {
-            Ok(None)
-        } else {
-            Err(Error::NotInitialized)
-        }
+        // initialized" via the shared initialisation predicate.
+        Self::require_initialized(env)?;
+        Ok(None)
     }
 
     /// Return the contract's code version.
@@ -7433,12 +7381,12 @@ impl MilestoneEscrow {
     /// # Errors
     /// * `NotInitialized` - Contract has not been initialized.
     pub fn get_reputation(env: Env, address: Address) -> Result<u32, Error> {
-        let storage = env.storage().persistent();
-        // `has` avoids deserializing the admin address we never use.
-        if !storage.has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
-        Ok(storage.get(&DataKey::Reputation(address)).unwrap_or(0))
+        Self::require_initialized(&env)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::Reputation(address))
+            .unwrap_or(0))
     }
 
     // ── escrow_interest_yield: estimator + share-config validation ────────────
@@ -8658,6 +8606,77 @@ impl MilestoneEscrow {
 
     // ── tax_withholding_deductions ────────────────────────────────────────────
 
+    /// The single tax-withholding calculation behind both
+    /// `tax_withholding_deductions` and `admin_tax_withholding_deductions`.
+    ///
+    /// Taxes the milestone's **remaining** balance (`amount - released_amount`)
+    /// with round-to-nearest (`split_round_nearest`), and only for milestones
+    /// still in `Pending` / `Delivered` / `PartiallyReleased`. Reads only; the
+    /// caller decides whether to persist or emit.
+    ///
+    /// # Errors
+    /// * `InvalidMilestone` – `milestone_index` is out of range.
+    /// * `InvalidRatio`     – `tax_rate_bps > 10_000`.
+    /// * `InvalidStatus`    – milestone is Released, Refunded, Split or Disputed.
+    /// * `InvalidAmount`    – empty contract balance, no remaining balance, or
+    ///                        arithmetic overflow.
+    fn compute_tax_withholding(
+        env: &Env,
+        meta: &JobMeta,
+        milestone_index: u32,
+        tax_rate_bps: u32,
+    ) -> Result<TaxWithholdingRecord, Error> {
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let milestone = Self::load_milestone(env, milestone_index)?;
+
+        // Only Pending/Delivered/PartiallyReleased milestones may have tax
+        // withheld — mirrors the state machine `raise_dispute_inner` and
+        // `resolve_dispute` already enforce elsewhere in this file. A
+        // Disputed milestone's funds are frozen pending arbitration. An
+        // exhaustive match means a future new `MilestoneStatus` variant fails
+        // to compile here instead of silently falling through as allowed.
+        match milestone.status {
+            MilestoneStatus::Pending
+            | MilestoneStatus::Delivered
+            | MilestoneStatus::PartiallyReleased => {}
+            MilestoneStatus::Released
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split
+            | MilestoneStatus::Disputed => return Err(Error::InvalidStatus),
+        }
+
+        let token_client = token::Client::new(env, &meta.token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        if contract_balance <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let gross_amount = milestone
+            .amount
+            .checked_sub(milestone.released_amount)
+            .ok_or(Error::InvalidAmount)?;
+        if gross_amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if tax_rate_bps > BPS_SCALE {
+            return Err(Error::InvalidRatio);
+        }
+
+        // tax_amount = round_nearest(gross × rate / 10_000)
+        let tax_split =
+            Self::split_round_nearest(gross_amount, tax_rate_bps as i128, BPS_SCALE as i128)?;
+
+        Ok(TaxWithholdingRecord {
+            gross_amount,
+            tax_amount: tax_split.first,
+            net_amount: tax_split.second,
+            tax_rate_bps,
+        })
+    }
+
     /// Compute and record a tax withholding deduction for a specific milestone.
     ///
     /// Calculates the tax owed on the milestone's remaining gross balance using
@@ -8701,54 +8720,13 @@ impl MilestoneEscrow {
             return Err(Error::InvalidRatio);
         }
 
-        let milestone = Self::load_milestone(&env, milestone_index)?;
-
-        // Only Pending/Delivered/PartiallyReleased milestones may have tax
-        // withheld — mirrors the state machine `raise_dispute_inner` and
-        // `resolve_dispute` already enforce elsewhere in this file. A
-        // Disputed milestone's funds are frozen pending arbitration, so
-        // computing (and persisting) a tax split for it here would let this
-        // entry point move money around a dispute the same way `resolve_dispute`
-        // is meant to gate exclusively. An exhaustive match (rather than the
-        // two equality checks this replaced) also means a future new
-        // `MilestoneStatus` variant fails to compile here instead of silently
-        // falling through as allowed.
-        match milestone.status {
-            MilestoneStatus::Pending
-            | MilestoneStatus::Delivered
-            | MilestoneStatus::PartiallyReleased => {}
-            MilestoneStatus::Released
-            | MilestoneStatus::Refunded
-            | MilestoneStatus::Split
-            | MilestoneStatus::Disputed => return Err(Error::InvalidStatus),
-        }
-
-        let token_client = token::Client::new(&env, &meta.token);
-        let contract_balance = token_client.balance(&env.current_contract_address());
-        if contract_balance <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        let gross_amount = milestone
-            .amount
-            .checked_sub(milestone.released_amount)
-            .ok_or(Error::InvalidAmount)?;
-        if gross_amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        // tax_amount = round_nearest(gross × rate / 10_000)
-        let tax_split =
-            Self::split_round_nearest(gross_amount, tax_rate_bps as i128, BPS_SCALE as i128)?;
-        let tax_amount = tax_split.first;
-        let net_amount = tax_split.second;
-
-        let record = TaxWithholdingRecord {
+        let record = Self::compute_tax_withholding(&env, &meta, milestone_index, tax_rate_bps)?;
+        let TaxWithholdingRecord {
             gross_amount,
             tax_amount,
             net_amount,
-            tax_rate_bps,
-        };
+            ..
+        } = record.clone();
 
         // Persist the record so admin override endpoints can read it without
         // recomputing tax arithmetic.
@@ -8971,9 +8949,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
-        if !env.storage().persistent().has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
+        Self::require_initialized(&env)?;
 
         Self::require_admin(&env, &admin)?;
 
@@ -9281,12 +9257,11 @@ impl MilestoneEscrow {
 
     /// Calculate tax withholding deductions for a milestone payout (admin).
     ///
-    /// Distinct from `tax_withholding_deductions`, which records a
-    /// `TaxWithholdingRecord` per milestone for the normal approval flow. This
-    /// admin-gated variant computes and returns the split directly and emits
-    /// `TaxWithholdingDeductionsEvent`. Both arrived from separate PRs under
-    /// the same name; this one carries the `admin_` prefix used by the other
-    /// admin-gated endpoints.
+    /// Admin-gated, read-only counterpart of `tax_withholding_deductions`: it
+    /// runs the same shared calculation (`compute_tax_withholding` — remaining
+    /// balance, round-to-nearest, same status checks) so both entry points
+    /// report identical numbers, but it does not persist a
+    /// `TaxWithholdingRecord` and emits `TaxWithholdingDeductionsEvent`.
     ///
     /// # Parameters
     /// * `admin`           – Must match `DataKey::Admin`.
@@ -9303,7 +9278,8 @@ impl MilestoneEscrow {
     /// * `NotFunded`        – Escrow has not been funded.
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidRatio`     – `tax_rate_bps` exceeds 10 000.
-    /// * `InvalidAmount`    – Milestone amount is ≤ 0 or arithmetic overflow.
+    /// * `InvalidStatus`    – Milestone is Released, Refunded, Split or Disputed.
+    /// * `InvalidAmount`    – No remaining balance, empty contract balance or overflow.
     pub fn admin_tax_withholding_deductions(
         env: Env,
         admin: Address,
@@ -9327,35 +9303,12 @@ impl MilestoneEscrow {
             return Err(Error::InvalidMilestone);
         }
 
-        let milestone = Self::load_milestone(&env, milestone_index)?;
-
-        if milestone.amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        if tax_rate_bps > BPS_SCALE {
-            return Err(Error::InvalidRatio);
-        }
-
-        let token_client = token::Client::new(&env, &meta.token);
-        let contract_balance = token_client.balance(&env.current_contract_address());
-        if contract_balance <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        let gross_amount = milestone.amount;
-        let tax_amount = gross_amount
-            .checked_mul(tax_rate_bps as i128)
-            .ok_or(Error::InvalidAmount)?
-            .checked_div(BPS_SCALE as i128)
-            .ok_or(Error::InvalidAmount)?;
-        let net_amount = gross_amount
-            .checked_sub(tax_amount)
-            .ok_or(Error::InvalidAmount)?;
-
-        if net_amount < 0 {
-            return Err(Error::InvalidAmount);
-        }
+        let TaxWithholdingRecord {
+            gross_amount,
+            tax_amount,
+            net_amount,
+            ..
+        } = Self::compute_tax_withholding(&env, &meta, milestone_index, tax_rate_bps)?;
 
         // Emit structured event for indexers.
         env.events().publish(
@@ -9439,9 +9392,7 @@ impl MilestoneEscrow {
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         admin.require_auth();
-        if !env.storage().persistent().has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
+        Self::require_initialized(&env)?;
         let stored_admin = Self::load_admin(&env)?;
         if stored_admin != admin {
             return Err(Error::Unauthorized);

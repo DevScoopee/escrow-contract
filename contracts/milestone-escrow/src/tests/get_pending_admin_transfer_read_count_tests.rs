@@ -32,7 +32,9 @@
 //! `get_pending_admin_transfer_tests`.
 
 use crate::test::setup_funded_escrow;
-use crate::{DataKey, Error, MilestoneEscrow, MilestoneEscrowClient, PendingAdminTransfer};
+use crate::{
+    DataKey, Error, JobMeta, MilestoneEscrow, MilestoneEscrowClient, PendingAdminTransfer,
+};
 use soroban_sdk::testutils::{Address as _, EnvTestConfig};
 use soroban_sdk::{vec, Address, Env};
 
@@ -52,6 +54,21 @@ fn seeded<'a>(
     let admin = Address::generate(env);
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        // `Job` is the shared initialisation marker (`is_initialized`).
+        env.storage().instance().set(
+            &DataKey::Job,
+            &JobMeta {
+                client: Address::generate(env),
+                freelancer: Address::generate(env),
+                arbiter: Address::generate(env),
+                token: Address::generate(env),
+                created_at: 0,
+                funded: false,
+                auto_release_seconds: 0,
+                milestone_count: 0,
+                total_amount: 0,
+            },
+        );
         if let Some(proposal) = pending {
             env.storage()
                 .persistent()
@@ -116,9 +133,8 @@ fn test_get_pending_admin_transfer_no_proposal_reads_the_admin_guard() {
     let resources = env.cost_estimate().resources();
 
     assert_eq!(
-        resources.memory_read_entries, 3,
-        "an absent proposal needs the Admin presence guard as well: \
-         contract-instance + PendingAdminTransfer + Admin; measured {resources:?}"
+        resources.memory_read_entries, 2,
+        "an absent proposal is checked against the instance-resident Job marker, so it costs the same two entries; measured {resources:?}"
     );
     assert_eq!(resources.write_entries, 0, "a read path writes nothing");
     assert_eq!(resources.disk_read_entries, 0);
@@ -144,10 +160,8 @@ fn test_get_pending_admin_transfer_uninitialized_reads_only_the_guard() {
     let resources = env.cost_estimate().resources();
 
     assert_eq!(
-        resources.memory_read_entries, 3,
-        "the NotInitialized path touches the contract-instance entry, the \
-         absent PendingAdminTransfer key and the absent Admin key; \
-         measured {resources:?}"
+        resources.memory_read_entries, 2,
+        "the NotInitialized path touches the contract-instance entry and the absent PendingAdminTransfer key; measured {resources:?}"
     );
     assert_eq!(
         resources.write_entries, 0,
@@ -164,7 +178,7 @@ fn test_get_pending_admin_transfer_uninitialized_reads_only_the_guard() {
 /// entry exists in both, yet only the no-proposal call puts it in the
 /// footprint.
 #[test]
-fn test_get_pending_admin_transfer_proposal_is_cheaper_than_no_proposal() {
+fn test_get_pending_admin_transfer_proposal_costs_same_as_no_proposal() {
     let env_with = env_without_snapshot();
     let stored = proposal(&env_with, 7);
     let (_, escrow_with) = seeded(&env_with, &Some(stored.clone()));
@@ -176,16 +190,11 @@ fn test_get_pending_admin_transfer_proposal_is_cheaper_than_no_proposal() {
     assert_eq!(escrow_without.get_pending_admin_transfer(), None);
     let without_proposal = env_without.cost_estimate().resources();
 
-    assert!(
-        with_proposal.memory_read_entries < without_proposal.memory_read_entries,
-        "the proposal-present path must read fewer entries than the \
-         no-proposal path; measured {with_proposal:?} vs {without_proposal:?}"
-    );
+    // The initialisation marker lives in the instance entry every call loads,
+    // so the no-proposal path no longer pays for an extra Admin entry.
     assert_eq!(
-        without_proposal.memory_read_entries - with_proposal.memory_read_entries,
-        1,
-        "exactly one entry — the persistent Admin guard — is saved; \
-         measured {with_proposal:?} vs {without_proposal:?}"
+        with_proposal.memory_read_entries, without_proposal.memory_read_entries,
+        "measured {with_proposal:?} vs {without_proposal:?}"
     );
 }
 
