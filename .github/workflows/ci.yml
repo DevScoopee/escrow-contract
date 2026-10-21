@@ -48,6 +48,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path contracts/milestone-escrow/Cargo.toml --all-targets -- -D warnings
 
+      - name: Format check (factory)
+        run: cargo fmt --manifest-path contracts/escrow-factory/Cargo.toml --check
+
+      - name: Clippy (factory)
+        run: cargo clippy --manifest-path contracts/escrow-factory/Cargo.toml --all-targets -- -D warnings
+
       - name: Main entry-point resource costs
         run: cargo test --manifest-path contracts/milestone-escrow/Cargo.toml cost_tests::main_entrypoint_cost_baselines -- --nocapture
 
@@ -56,6 +62,12 @@ jobs:
 
       - name: Build WASM
         run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
+
+      - name: Run factory tests
+        run: cargo test --manifest-path contracts/escrow-factory/Cargo.toml
+
+      - name: Build factory WASM
+        run: stellar contract build --manifest-path contracts/escrow-factory/Cargo.toml
 
   reproducible-wasm:
     # Builds the release wasm in the pinned container (issue #773) and publishes
