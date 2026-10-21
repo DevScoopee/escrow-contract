@@ -92,7 +92,8 @@ The admin is the platform. It is set by `initialize` and can be replaced with
 
 ## Out of scope
 
-- Off-chain components: the backend indexer, the frontend in `app/`, and how
+- Off-chain components: the backend indexer, the frontend
+  ([escrow-frontend](https://github.com/Goldii-locks/escrow-frontend)), and how
   milestone descriptions and deliverables are agreed.
 - Key management and compromise of any party's signing keys.
 - Stellar network, Soroban host and token contract correctness.
