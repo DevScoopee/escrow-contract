@@ -7,7 +7,7 @@
 //! the contract's single `contract_instance` ledger entry, which the call needs
 //! anyway for the `DataKey::Job` metadata holding the token address), the
 //! contract's token balance, and the approval bitmap
-//! `MultiSigApproval(proposal_id)` (**temporary**) — one key of key type `u32`
+//! `MultiSigApproval(proposal_id)` (**persistent**) — one key of key type `u32`
 //! holding one `u32`, one bit per signer index.
 //!
 //! # Before
@@ -135,25 +135,25 @@ fn unfunded_multisig_escrow(env: &Env) -> (Address, Vec<Address>, MilestoneEscro
 fn stored_bitmap(env: &Env, contract_id: &Address, proposal_id: u32) -> u32 {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
+            .persistent()
             .get(&DataKey::MultiSigApproval(proposal_id))
             .unwrap_or(0)
     })
 }
 
-/// Remaining TTL, in ledgers, of the temporary bitmap entry.
+/// Remaining TTL, in ledgers, of the persistent bitmap entry.
 fn bitmap_ttl(env: &Env, contract_id: &Address, proposal_id: u32) -> u32 {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
+            .persistent()
             .get_ttl(&DataKey::MultiSigApproval(proposal_id))
     })
 }
 
-/// Number of keys this contract currently holds in temporary storage — for
+/// Number of keys this contract currently holds in persistent storage — for
 /// `multisig_approve` that is exactly one key per proposal with a bitmap.
-fn temporary_key_count(env: &Env, contract_id: &Address) -> u32 {
-    env.as_contract(contract_id, || env.storage().temporary().all().len())
+fn persistent_key_count(env: &Env, contract_id: &Address) -> u32 {
+    env.as_contract(contract_id, || env.storage().persistent().all().len())
 }
 
 /// Number of keys this contract currently holds in instance storage.
@@ -288,7 +288,7 @@ fn test_multisig_approve_duplicate_writes_no_contract_storage_key() {
 
 // ── the key shape the call writes ────────────────────────────────────────────
 
-/// Key-level shape: each approved proposal owns exactly one temporary key
+/// Key-level shape: each approved proposal owns exactly one persistent key
 /// (`MultiSigApproval(proposal_id)`), duplicates add none, and an approval never
 /// writes an instance key — not the signer set, not the threshold, not the
 /// bitmap.  This pins the layout the issue asks about (metadata and bitmap in
@@ -302,7 +302,7 @@ fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
 
     let instance_keys_before = instance_key_count(&env, &contract_id);
     assert_eq!(
-        temporary_key_count(&env, &contract_id),
+        persistent_key_count(&env, &contract_id),
         0,
         "precondition: no proposal bitmap exists yet"
     );
@@ -314,9 +314,9 @@ fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
     let duplicate = escrow.multisig_approve(&s0, &11u32);
 
     assert_eq!(
-        temporary_key_count(&env, &contract_id),
+        persistent_key_count(&env, &contract_id),
         2,
-        "two approved proposals must own exactly two temporary storage keys"
+        "two approved proposals must own exactly two persistent storage keys"
     );
     assert_eq!(
         instance_key_count(&env, &contract_id),
@@ -328,10 +328,10 @@ fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
     assert_eq!(stored_bitmap(&env, &contract_id, 10u32), 0b011);
     assert_eq!(stored_bitmap(&env, &contract_id, 11u32), 0b001);
 
-    // Both temporary keys are proposal bitmaps under the u32-only
+    // Both persistent keys are proposal bitmaps under the u32-only
     // `MultiSigApproval` key, holding the u32 bitmap as value.
     env.as_contract(&contract_id, || {
-        let all = env.storage().temporary().all();
+        let all = env.storage().persistent().all();
         assert_eq!(all.len(), 2);
         assert!(
             all.contains_key(DataKey::MultiSigApproval(10u32).into_val(&env)),
@@ -491,13 +491,47 @@ fn test_multisig_approve_rejections_write_no_bitmap() {
         .is_err());
 
     assert_eq!(
-        temporary_key_count(&env, &contract_id),
+        persistent_key_count(&env, &contract_id),
         0,
         "no rejection may create the bitmap key"
     );
     assert_eq!(
-        temporary_key_count(&env, &empty_id),
+        persistent_key_count(&env, &empty_id),
         0,
         "the balance guard must reject before the bitmap is touched"
     );
 }
+
+// ── TTL persistence test ───────────────────────────────────────────────────────
+
+/// Approvals stored in persistent storage survive TTL expiry for multi-day
+/// governance workflows. This test verifies that advancing the ledger past
+/// the default TTL does not cause approvals to disappear.
+#[test]
+fn test_multisig_approve_persists_across_ledger_advancement() {
+    use soroban_sdk::testutils::Ledger as _;
+
+    let env = Env::default();
+    let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
+    let s0 = signers.get(0).unwrap();
+    let s1 = signers.get(1).unwrap();
+
+    // First signer approves proposal 1
+    let state1 = escrow.multisig_approve(&s0, &1u32);
+    assert_eq!(state1.approvals, 1);
+    assert_eq!(state1.bitmap, 0b001);
+    assert!(!state1.approved);
+
+    // Advance ledger significantly (simulating multiple days)
+    env.ledger().with_mut(|li| li.sequence_number += 10000);
+
+    // Second signer approves the same proposal - both approvals should count
+    let state2 = escrow.multisig_approve(&s1, &1u32);
+    assert_eq!(state2.approvals, 2);
+    assert_eq!(state2.bitmap, 0b011);
+    assert!(state2.approved);
+
+    // Verify the bitmap persists in persistent storage
+    assert_eq!(stored_bitmap(&env, &contract_id, 1u32), 0b011);
+}
+

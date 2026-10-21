@@ -532,7 +532,7 @@ fn try_approve(
 fn approval_bitmap(env: &Env, contract_id: &Address, proposal_id: u32) -> Option<u32> {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
+            .persistent()
             .get(&DataKey::MultiSigApproval(proposal_id))
     })
 }

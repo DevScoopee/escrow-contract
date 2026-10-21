@@ -382,9 +382,9 @@ pub enum DataKey {
     /// entry instead of occupying its own storage key; read only as the legacy
     /// fallback in `load_multisig_config`.
     MultiSigThreshold,
-    /// Transient approval-bitmap for a given proposal index.  Uses **temporary**
-    /// storage so the ledger footprint does not persist beyond the proposal
-    /// lifecycle.  Each bit position corresponds to a signer index in the
+    /// Persistent approval-bitmap for a given proposal index.  Uses **persistent**
+    /// storage so approvals survive TTL expiry for M-of-N governance that spans
+    /// multiple days.  Each bit position corresponds to a signer index in the
     /// `MultiSigSigners` vec; a set bit means that signer has approved.
     /// The `u32` value is treated as a bitset, supporting up to 32 signers.
     /// Key type: `u32` (the proposal index) — significantly smaller than a
@@ -6965,10 +6965,10 @@ impl MilestoneEscrow {
             return Err(Error::MultiSigEmptyBalance);
         }
 
-        // Read the current bitmap from temporary storage (default: 0 = no approvals).
+        // Read the current bitmap from persistent storage (default: 0 = no approvals).
         let mut bitmap: u32 = env
             .storage()
-            .temporary()
+            .persistent()
             .get(&DataKey::MultiSigApproval(proposal_id))
             .unwrap_or(0);
 
@@ -7003,8 +7003,14 @@ impl MilestoneEscrow {
         if bitmap & mask == 0 {
             bitmap = bitmap.checked_add(mask).ok_or(Error::ArithmeticOverflow)?;
             env.storage()
-                .temporary()
+                .persistent()
                 .set(&DataKey::MultiSigApproval(proposal_id), &bitmap);
+            // Extend TTL on each approval to keep the bitmap alive for multi-day
+            // governance workflows.  Use a generous TTL (e.g., 30 days) to avoid
+            // frequent extensions.
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::MultiSigApproval(proposal_id), 5000, 5000);
         }
 
         let approvals = bitmap.count_ones();
@@ -7034,12 +7040,12 @@ impl MilestoneEscrow {
     ///
     /// # Returns
     /// A `MultiSigApprovalState` built from the persistent `MultiSigConfig`
-    /// (its threshold field) and the temporary `MultiSigApproval(proposal_id)`
+    /// (its threshold field) and the persistent `MultiSigApproval(proposal_id)`
     /// bitmap.  An unknown or expired proposal reads as an empty bitmap
     /// (`approvals == 0`).
     ///
     /// # Guarantees
-    /// * **Read-only.**  Exactly two `get`s (instance config, temporary
+    /// * **Read-only.**  Exactly two `get`s (instance config, persistent
     ///   bitmap), via `read_multisig_approval`.  No `set`, `remove`,
     ///   `extend_ttl`, or event publish in instance, persistent, or temporary
     ///   storage — in particular it never re-writes the bitmap or bumps its
@@ -7061,14 +7067,14 @@ impl MilestoneEscrow {
     /// **This function must contain only read operations.**
     fn read_multisig_approval(env: &Env, proposal_id: u32) -> Result<MultiSigApprovalState, Error> {
         // One instance `get` for the consolidated signer-set/threshold entry
-        // (issue #456).  The temporary bitmap below is the only other storage
+        // (issue #456).  The persistent bitmap below is the only other storage
         // read; nothing here writes.
         let config = Self::load_multisig_config(env).ok_or(Error::NotInitialized)?;
         let threshold = config.1;
 
         let bitmap: u32 = env
             .storage()
-            .temporary()
+            .persistent()
             .get(&DataKey::MultiSigApproval(proposal_id))
             .unwrap_or(0);
 
@@ -7203,6 +7209,11 @@ impl MilestoneEscrow {
             .persistent()
             .remove(&DataKey::PendingAdminTransfer);
 
+        // Clean up the approval bitmap for the executed proposal.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::MultiSigApproval(pending.proposal_id));
+
         env.events().publish(
             (symbol_short!("adminexc"),),
             AdminTransferExecutedEvent {
@@ -7234,6 +7245,11 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::PendingAdminTransfer);
+
+        // Clean up the approval bitmap for the cancelled proposal.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::MultiSigApproval(pending.proposal_id));
 
         env.events().publish(
             (symbol_short!("admincxl"),),
