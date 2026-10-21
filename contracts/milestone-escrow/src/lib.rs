@@ -234,6 +234,53 @@ pub struct Job {
     pub auto_release_seconds: u64,
 }
 
+/// Both pause switches. `emergency` is `DataKey::Ep` (`emergency_pause`);
+/// `admin` is `DataKey::Paused` (the admin pause also reported by
+/// `get_yield_info`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowPausedState {
+    pub emergency: bool,
+    pub admin: bool,
+}
+
+/// Mutual-cancellation state: `locked` is `DataKey::CancelLock`, and
+/// `approval_mask` is `DataKey::CancelApproval` (bit 1 = client approved,
+/// bit 2 = freelancer approved).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowCancelState {
+    pub locked: bool,
+    pub approval_mask: u32,
+}
+
+/// Per-milestone timing, index-aligned with `Job::milestones`.
+/// `deadline` is the auto-release deadline (delivery time +
+/// `auto_release_seconds` + extension); `None` unless the milestone is
+/// `Delivered`, the only status auto-release applies to.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneTiming {
+    pub extension_seconds: u32,
+    pub deadline: Option<u64>,
+}
+
+/// Everything a UI needs to render an escrow, in one read (`get_escrow_state`).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowState {
+    pub job: Job,
+    pub admin: Address,
+    pub paused: EscrowPausedState,
+    pub cancel: EscrowCancelState,
+    pub milestone_timing: Vec<MilestoneTiming>,
+    /// Whether a platform-fee allocation has been configured; when `false`,
+    /// `fee_allocation` is all zeros.
+    pub fee_allocation_set: bool,
+    pub fee_allocation: PlatformFeeAllocation,
+    pub version: u32,
+}
+
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FundingMode {
@@ -7355,6 +7402,76 @@ impl MilestoneEscrow {
     pub fn get_job(env: Env) -> Result<Job, Error> {
         let meta = Self::load_job_meta(&env)?;
         Self::assemble_job(&env, &meta)
+    }
+
+    /// Return everything needed to render the escrow in a single read: the
+    /// job (as `get_job`), the admin, both pause flags, the cancellation
+    /// lock and approval mask, each milestone's time extension and
+    /// auto-release deadline, the platform-fee allocation and the version.
+    ///
+    /// Several of these (admin, cancel state, per-milestone extensions) have
+    /// no other getter, and the rest would otherwise cost one simulation each.
+    ///
+    /// Read-only: no storage write, TTL extension or event (enforced by
+    /// `get_escrow_state_no_mutation_tests`).
+    ///
+    /// # Errors
+    /// * `NotInitialized` – Contract has not been initialized.
+    pub fn get_escrow_state(env: Env) -> Result<EscrowState, Error> {
+        let meta = Self::load_job_meta(&env)?;
+        let job = Self::assemble_job(&env, &meta)?;
+        let admin = Self::load_admin(&env)?;
+
+        let instance = env.storage().instance();
+        let paused = EscrowPausedState {
+            emergency: instance.get(&DataKey::Ep).unwrap_or(false),
+            admin: instance.get(&DataKey::Paused).unwrap_or(false),
+        };
+        let cancel = EscrowCancelState {
+            locked: instance.get(&DataKey::CancelLock).unwrap_or(false),
+            approval_mask: instance.get(&DataKey::CancelApproval).unwrap_or(0),
+        };
+
+        let mut milestone_timing = Vec::new(&env);
+        for (index, milestone) in job.milestones.iter().enumerate() {
+            let index = index as u32;
+            let extension_seconds = Self::load_time_extension(&env, index);
+            // Auto-release only applies to Delivered milestones
+            // (claim_auto_release), so only they have a deadline.
+            let deadline = if milestone.status == MilestoneStatus::Delivered {
+                let delivered_at =
+                    Self::load_delivered_at(&env, index).unwrap_or(milestone.delivered_at);
+                Some(Self::auto_release_deadline(
+                    &meta,
+                    delivered_at,
+                    extension_seconds,
+                )?)
+            } else {
+                None
+            };
+            milestone_timing.push_back(MilestoneTiming {
+                extension_seconds,
+                deadline,
+            });
+        }
+
+        let fee_allocation: Option<PlatformFeeAllocation> =
+            Self::cold_get(&env, &DataKey::PlatformFeeAllocation);
+        Ok(EscrowState {
+            job,
+            admin,
+            paused,
+            cancel,
+            milestone_timing,
+            fee_allocation_set: fee_allocation.is_some(),
+            fee_allocation: fee_allocation.unwrap_or(PlatformFeeAllocation {
+                client_bps: 0,
+                freelancer_bps: 0,
+                treasury_bps: 0,
+                locked: false,
+            }),
+            version: Self::read_version(&env),
+        })
     }
 
     /// Recover tokens that are not backing outstanding escrow obligations.
