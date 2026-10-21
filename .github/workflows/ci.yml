@@ -54,8 +54,40 @@ jobs:
       - name: Run tests
         run: cargo test --manifest-path contracts/milestone-escrow/Cargo.toml
 
-      - name: Build WASM
-        run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
+      - name: Build and optimize WASM
+        # `--optimize` runs wasm-opt on the release build; that is the wasm
+        # which gets deployed, so it is the one measured below.
+        run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml --optimize --out-dir dist/optimized
+
+      - name: WASM size budget
+        # Fails when the optimized wasm outgrows WASM_BUDGET_BYTES, so size
+        # creep is caught in the PR that causes it. The budget is the size
+        # when it was set (170,237 bytes) plus 5%. Raise it deliberately, in a
+        # PR that explains the growth.
+        env:
+          WASM_BUDGET_BYTES: "178749"
+        run: |
+          wasm=dist/optimized/milestone_escrow.wasm
+          size=$(stat -c %s "$wasm")
+          sha=$(sha256sum "$wasm" | cut -d' ' -f1)
+          echo "milestone_escrow.wasm: $size bytes (budget $WASM_BUDGET_BYTES), sha256 $sha"
+          {
+            echo "### Optimized milestone_escrow.wasm"
+            echo ""
+            echo "| size (bytes) | budget (bytes) | sha256 |"
+            echo "|---|---|---|"
+            echo "| $size | $WASM_BUDGET_BYTES | \`$sha\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt "$WASM_BUDGET_BYTES" ]; then
+            echo "::error::milestone_escrow.wasm is $size bytes, over the $WASM_BUDGET_BYTES-byte budget"
+            exit 1
+          fi
+
+      - name: Upload optimized wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestone_escrow-optimized-${{ github.sha }}
+          path: dist/optimized/milestone_escrow.wasm
 
   dependencies:
     # RUSTSEC advisories (vulnerable, unsound, unmaintained), yanked crates,

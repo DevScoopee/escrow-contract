@@ -81,6 +81,12 @@ The same commit gives the same hash on any machine. CI runs the same script on
 every commit and publishes the hash in the job summary and the wasm as an
 artifact.
 
+The `test` job also builds the optimized wasm, prints its size and SHA-256,
+uploads it as an artifact, and fails when it is larger than
+`WASM_BUDGET_BYTES` (set in `.github/workflows/ci.yml` to the size when the
+budget was added plus 5%). If a change legitimately needs more room, raise the
+budget in the same PR and say why.
+
 ## Test
 
 From the repository root:
