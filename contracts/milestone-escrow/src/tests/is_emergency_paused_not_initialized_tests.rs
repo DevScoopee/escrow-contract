@@ -185,11 +185,10 @@ fn test_is_emergency_paused_not_initialized_is_stable_across_repeated_calls() {
 
 // ── 2 ─ a rejected initialize must not look initialized ──────────────────────
 
-/// `initialize` writes its `DataKey::Job` re-entrancy sentinel before
-/// validating the milestone list.  When a later check rejects the call the host
-/// rolls that write back, so the read must still report `NotInitialized` —
-/// proving the guard keys off the pause flag (committed by a *successful*
-/// `initialize`) rather than the sentinel.
+/// A rejected `initialize` (here: an empty milestone list) must leave no
+/// trace: the host rolls back the whole invocation and `initialize` writes
+/// `DataKey::Job` only once, after validation, so the read must still report
+/// `NotInitialized`.
 #[test]
 fn test_is_emergency_paused_still_not_initialized_after_rejected_initialize() {
     let env = Env::default();
@@ -206,7 +205,7 @@ fn test_is_emergency_paused_still_not_initialized_after_rejected_initialize() {
     let contract_id = env.register(MilestoneEscrow, ());
     let client = MilestoneEscrowClient::new(&env, &contract_id);
 
-    // Empty milestone list: rejected with InvalidAmount after the sentinel write.
+    // Empty milestone list: rejected with InvalidAmount.
     let rejected = client.try_initialize(
         &admin_addr,
         &client_addr,
@@ -220,7 +219,10 @@ fn test_is_emergency_paused_still_not_initialized_after_rejected_initialize() {
     assert_eq!(rejected, Err(Ok(Error::InvalidAmount)));
 
     let before = capture_ledger(&env, &contract_id);
-    assert!(!before.job_exists, "sentinel write must be rolled back");
+    assert!(
+        !before.job_exists,
+        "a rejected initialize must not leave DataKey::Job"
+    );
 
     let result = client.try_is_emergency_paused();
     let after = capture_ledger(&env, &contract_id);

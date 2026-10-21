@@ -2950,27 +2950,12 @@ impl MilestoneEscrow {
             return Err(Error::AlreadyInitialized);
         }
 
-        // Write a sentinel immediately to prevent reentrancy: any reentrant
-        // call to `initialize` will now see `DataKey::Job` already present and
-        // return `AlreadyInitialized` before touching any other state.
-        // The sentinel is a zero-value `JobMeta` placeholder; the real meta
-        // overwrites it at the end of this function once all validation has
-        // passed and milestones have been stored.
+        // No placeholder `DataKey::Job` is written here. The Soroban host does
+        // not allow a contract to be re-entered, so no call can observe a
+        // half-initialised escrow; if validation below fails the transaction
+        // reverts and nothing persists. `DataKey::Job` is written exactly
+        // once, at the end, with the real metadata.
         let created_at = env.ledger().timestamp();
-        env.storage().instance().set(
-            &DataKey::Job,
-            &JobMeta {
-                client: admin.clone(),
-                freelancer: admin.clone(),
-                arbiter: admin.clone(),
-                token: admin.clone(),
-                created_at,
-                funded: false,
-                auto_release_seconds: 0,
-                milestone_count: 0,
-                total_amount: 0,
-            },
-        );
 
         Self::validate_address(&env, &admin)?;
         Self::validate_address(&env, &client)?;
