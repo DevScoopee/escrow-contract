@@ -57,6 +57,20 @@ jobs:
       - name: Build WASM
         run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
 
+  dependencies:
+    # RUSTSEC advisories (vulnerable, unsound, unmaintained), yanked crates,
+    # disallowed licenses and unknown sources in Cargo.lock fail CI. Policy
+    # and accepted exceptions live in deny.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
   reproducible-wasm:
     # Builds the release wasm in the pinned container (issue #773) and publishes
     # it with its SHA-256 for every commit, so a deployed contract's wasm hash
