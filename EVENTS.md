@@ -35,6 +35,7 @@ row here, and a row here must correspond to a topic in the source.
 | `emunpause`| `EmergencyUnpausedEvent`         | state change      |
 | `emoverrid`| `EmergencyPauseAdminOverrideEvent` | state change    |
 | `epalloc`  | `EmergencyPauseAllocationEvent`  | calculation       |
+| `epclaim`  | `EmergencyPauseClaimRefundEvent` | state change      |
 | `admin`    | `TransferAdminEvent`             | state change      |
 | `adminprp` | `AdminTransferProposedEvent`     | state change      |
 | `admincxl` | `AdminTransferCancelledEvent`    | state change      |
