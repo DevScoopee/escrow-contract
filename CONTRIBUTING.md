@@ -41,11 +41,14 @@ nightly (and on demand) via the `E2E` GitHub Actions workflow.
 
 ## Documentation requirements
 
-Two references are checked in CI and must stay in sync with the contract:
+Three references are checked in CI and must stay in sync with the contract:
 
 - `SPEC.md` describes milestone states and dispute semantics.
 - `EVENTS.md` lists every emitted event topic; the `event_docs_sync_tests`
   module fails if a `symbol_short!` topic is added without a matching row.
+- `CHANGELOG.md` records released versions, deployed WASM hashes, and user-visible
+  ABI changes. Any PR that adds, removes, or alters user-visible ABI or contract
+  behavior must update `CHANGELOG.md` in the same PR.
 
 ## Submitting Changes
 

@@ -21,6 +21,7 @@ mod cancel_admin_transfer_tests;
 mod cancel_escrow_split_refund_guards_tests;
 mod cancel_escrow_test;
 mod cold_config_storage_tests;
+mod conservation_proptests;
 mod cost_tests;
 mod dispute_timeout_tests;
 mod emergency_pause_admin_override_tests;
