@@ -36,7 +36,6 @@ fn test_emergency_pause_happy_path_and_event() {
     let parsed_event = EmergencyPausedEvent::from_val(&env, &last_event.2);
     assert_eq!(parsed_event.client, client_addr);
     assert_eq!(parsed_event.freelancer, freelancer_addr);
-    assert_eq!(parsed_event.contract_id, client.address);
 
     // Verify status
     assert!(client.is_emergency_paused());
@@ -65,7 +64,6 @@ fn test_emergency_unpause_happy_path_and_event() {
     assert_eq!(topic, symbol_short!("emunpause"));
     let parsed_event = EmergencyUnpausedEvent::from_val(&env, &last_event.2);
     assert_eq!(parsed_event.admin, admin_addr);
-    assert_eq!(parsed_event.contract_id, client.address);
 
     // Verify status
     assert!(!client.is_emergency_paused());
@@ -113,7 +111,6 @@ fn test_emergency_pause_admin_override_happy_path_and_event() {
     assert_eq!(topic, symbol_short!("emoverrid"));
     let parsed_event = EmergencyPauseAdminOverrideEvent::from_val(&env, &last_event.2);
     assert_eq!(parsed_event.admin, admin_addr);
-    assert_eq!(parsed_event.contract_id, client.address);
     assert!(parsed_event.paused);
     assert!(!parsed_event.previous);
 
@@ -130,7 +127,6 @@ fn test_emergency_pause_admin_override_happy_path_and_event() {
     assert_eq!(topic2, symbol_short!("emoverrid"));
     let parsed_event2 = EmergencyPauseAdminOverrideEvent::from_val(&env, &last_event2.2);
     assert_eq!(parsed_event2.admin, admin_addr);
-    assert_eq!(parsed_event2.contract_id, client.address);
     assert!(!parsed_event2.paused);
     assert!(parsed_event2.previous);
 
@@ -156,7 +152,6 @@ fn test_emergency_pause_admin_override_event_reconciles_with_persisted_state() {
     let ev = last_emoverrid_event(&env);
     assert_eq!(emoverrid_event_count(&env), 1);
     assert_eq!(ev.admin, admin_addr);
-    assert_eq!(ev.contract_id, client.address);
     // `paused` equals the flag the call actually persisted.
     assert_eq!(ev.paused, client.is_emergency_paused());
     assert!(ev.paused);

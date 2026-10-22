@@ -88,7 +88,6 @@ fn event_reconciles_with_persisted_state_on_partial_split() {
     let ev = last_arbsplit_event(&env);
 
     // Acting address + identities.
-    assert_eq!(ev.contract_id, contract_id);
     assert_eq!(ev.arbiter, arbiter_addr);
     assert_eq!(ev.milestone_index, 0u32);
     assert_eq!(ev.client, client_addr);

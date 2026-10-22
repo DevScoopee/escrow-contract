@@ -1200,14 +1200,6 @@
                 },
                 {
                   "key": {
-                    "symbol": "contract_id"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
-                  }
-                },
-                {
-                  "key": {
                     "symbol": "token"
                   },
                   "val": {

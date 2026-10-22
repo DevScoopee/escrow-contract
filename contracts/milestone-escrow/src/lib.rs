@@ -572,7 +572,6 @@ pub struct ExcessSweptEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FundedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Address,
@@ -586,7 +585,6 @@ pub struct FundedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneFundedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub milestone_index: u32,
     pub amount: i128,
@@ -596,7 +594,6 @@ pub struct MilestoneFundedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionRequestedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub note_hash: BytesN<32>,
@@ -606,7 +603,6 @@ pub struct RevisionRequestedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveredEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub client: Address,
@@ -618,7 +614,6 @@ pub struct DeliveredEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeadlineExtendedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub extra_seconds: u32,
@@ -629,7 +624,6 @@ pub struct DeadlineExtendedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -675,7 +669,6 @@ pub struct DisputeEscalatedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeResolvedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub arbiter: Address,
     pub client: Address,
@@ -703,8 +696,6 @@ pub struct DisputeResolvedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArbitrationSplitAppliedEvent {
-    /// Address of this escrow contract.
-    pub contract_id: Address,
     /// Arbiter that authorised and applied the split (the acting address).
     pub arbiter: Address,
     /// Milestone the split was applied to.
@@ -731,7 +722,6 @@ pub struct ArbitrationSplitAppliedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxWithholdingDeductionsEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub gross_amount: i128,
     pub tax_amount: i128,
@@ -767,7 +757,6 @@ pub struct PlatformFeeDistribution {
 pub struct PlatformFeeAllocationOverrideEvent {
     /// Admin that authorised and applied the override (the acting address).
     pub admin: Address,
-    pub contract_id: Address,
     pub client_bps: u32,
     pub freelancer_bps: u32,
     pub treasury_bps: u32,
@@ -811,7 +800,6 @@ pub struct PlatformFeeSplitCalculatedEvent {
 }
 
 pub struct AutoReleasedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub client: Address,
@@ -866,7 +854,6 @@ pub struct EscrowInterestYieldState {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -876,7 +863,6 @@ pub struct ClaimedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawnEvent {
-    pub contract_id: Address,
     pub recipient: Address,
     pub token: Address,
     pub amount: i128,
@@ -885,7 +871,6 @@ pub struct WithdrawnEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobAcceptedEvent {
-    pub contract_id: Address,
     pub party: Address,
     pub acceptance_mask: u32,
 }
@@ -893,7 +878,6 @@ pub struct JobAcceptedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnacceptedWithdrawnEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub token: Address,
     pub amount: i128,
@@ -902,7 +886,6 @@ pub struct UnacceptedWithdrawnEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelEscrowInitiatedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Whether the initiating caller is the client (`true`) or the freelancer
     /// (`false`).  Lets indexers attribute the cancellation without resolving
@@ -926,7 +909,6 @@ pub struct CancelEscrowInitiatedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelApprovalRecordedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Current bitmask after recording this approval.
     /// bit 0 = client approved, bit 1 = freelancer approved.
@@ -938,7 +920,6 @@ pub struct CancelApprovalRecordedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelApprovalRevokedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Updated bitmask after removing this party's bit.
     pub approval_mask: u32,
@@ -950,7 +931,6 @@ pub struct CancelApprovalRevokedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminCancelOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub freelancer: Address,
     pub token: Address,
     pub total_released: i128,
@@ -962,7 +942,6 @@ pub struct AdminCancelOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminCancelOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub client: Address,
     pub token: Address,
     pub total_refunded: i128,
@@ -974,7 +953,6 @@ pub struct AdminCancelOverrideRefundEvent {
 pub struct EmergencyPausedEvent {
     pub client: Address,
     pub freelancer: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `emergency_unpause` when the admin unpauses the escrow.
@@ -982,7 +960,6 @@ pub struct EmergencyPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmergencyUnpausedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 #[contracttype]
@@ -990,7 +967,6 @@ pub struct EmergencyUnpausedEvent {
 pub struct EmergencyPartyUnpausedEvent {
     pub client: Address,
     pub freelancer: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `emergency_pause_claim_refund` on its success path only.
@@ -1023,7 +999,6 @@ pub struct EmergencyPauseClaimRefundEvent {
 pub struct EmergencyPauseAdminOverrideEvent {
     /// Admin that authorised and applied the override (the acting address).
     pub admin: Address,
-    pub contract_id: Address,
     /// Pause flag persisted by this call (`DataKey::Ep`).
     pub paused: bool,
     /// Pause flag that was in effect immediately before this call.
@@ -1049,7 +1024,6 @@ pub struct TaxWithholdingRecord {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxWithholdingAppliedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub gross_amount: i128,
     pub tax_amount: i128,
@@ -1080,7 +1054,6 @@ pub struct TaxWithholdingSplitRefundEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1094,7 +1067,6 @@ pub struct AdminOverrideTaxReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -1110,7 +1082,6 @@ pub struct AdminOverrideTaxRefundEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxSplitRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1165,7 +1136,6 @@ pub struct YieldAccruedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1178,7 +1148,6 @@ pub struct AdminOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -1259,7 +1228,6 @@ pub struct EscrowInterestYieldLockedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideStreamingReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1395,7 +1363,6 @@ pub struct AdminTransferCancelledEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowPausedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `admin_resume_escrow` when the admin lifts the pause and
@@ -1404,7 +1371,6 @@ pub struct EscrowPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowResumedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 // ── NEW EVENTS ─────────────────────────────────────────────
@@ -1458,7 +1424,6 @@ pub struct PaymentStreamingEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaymentStreamingConsentEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1476,7 +1441,6 @@ pub struct PaymentStreamingConsentEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeExtConsentEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1531,7 +1495,6 @@ pub struct MultisigApprovalInitEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultisigAdminOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1544,7 +1507,6 @@ pub struct MultisigAdminOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultisigAdminOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -2473,7 +2435,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (topic,),
             JobAcceptedEvent {
-                contract_id: env.current_contract_address(),
                 party,
                 acceptance_mask: new_mask,
             },
@@ -3568,7 +3529,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("fund"),),
             FundedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 freelancer: meta.freelancer,
                 arbiter: meta.arbiter,
@@ -3647,7 +3607,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("msfund"),),
             MilestoneFundedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 milestone_index,
                 amount: milestone.amount,
@@ -3779,7 +3738,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("unaccref"),),
             UnacceptedWithdrawnEvent {
-                contract_id: env.current_contract_address(),
                 client: meta.client,
                 token: meta.token,
                 amount: total_refunded,
@@ -3872,7 +3830,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("deliver"),),
             DeliveredEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 client: meta.client,
@@ -3946,7 +3903,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("msrev"),),
             RevisionRequestedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client,
                 note_hash,
@@ -4018,7 +3974,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("extend"),),
             DeadlineExtendedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client,
                 extra_seconds,
@@ -4136,7 +4091,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("claim"),),
             ClaimedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -4309,7 +4263,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("approve"),),
             ApprovedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -4420,7 +4373,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("approve"),),
             ApprovedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -4478,7 +4430,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("withdraw"),),
             WithdrawnEvent {
-                contract_id: env.current_contract_address(),
                 recipient: caller,
                 token: meta.token,
                 amount,
@@ -4861,7 +4812,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("resolve"),),
             DisputeResolvedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
                 client: meta.client.clone(),
@@ -5116,7 +5066,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("resolve"),),
             DisputeResolvedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
                 client: meta.client.clone(),
@@ -5135,7 +5084,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("arbsplit"),),
             ArbitrationSplitAppliedEvent {
-                contract_id: env.current_contract_address(),
                 arbiter: meta.arbiter.clone(),
                 milestone_index,
                 client: meta.client.clone(),
@@ -5245,7 +5193,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("cancel"),),
                 CancelEscrowInitiatedEvent {
-                    contract_id: env.current_contract_address(),
                     caller_is_client: caller == meta.client,
                     client: meta.client.clone(),
                     freelancer: meta.freelancer.clone(),
@@ -5264,7 +5211,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("cxlappr"),),
             CancelApprovalRecordedEvent {
-                contract_id: env.current_contract_address(),
                 caller,
                 approval_mask: new_mask,
             },
@@ -5348,7 +5294,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("cancelrev"),),
             CancelApprovalRevokedEvent {
-                contract_id: env.current_contract_address(),
                 caller,
                 approval_mask: new_mask,
             },
@@ -5454,7 +5399,6 @@ impl MilestoneEscrow {
             (symbol_short!("adcovls"),),
             AdminCancelOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 freelancer: meta.freelancer,
                 token: meta.token,
                 total_released,
@@ -5563,7 +5507,6 @@ impl MilestoneEscrow {
             (symbol_short!("adcovrf"),),
             AdminCancelOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 client: meta.client,
                 token: meta.token,
                 total_refunded,
@@ -5809,11 +5752,7 @@ impl MilestoneEscrow {
 
         env.events().publish(
             (symbol_short!("empause"),),
-            EmergencyPausedEvent {
-                client,
-                freelancer,
-                contract_id: env.current_contract_address(),
-            },
+            EmergencyPausedEvent { client, freelancer },
         );
 
         Ok(())
@@ -5865,7 +5804,6 @@ impl MilestoneEscrow {
             (symbol_short!("emunpause"),),
             EmergencyUnpausedEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
             },
         );
 
@@ -5904,11 +5842,7 @@ impl MilestoneEscrow {
 
         env.events().publish(
             (symbol_short!("emunpause"),),
-            EmergencyPartyUnpausedEvent {
-                client,
-                freelancer,
-                contract_id: env.current_contract_address(),
-            },
+            EmergencyPartyUnpausedEvent { client, freelancer },
         );
         Ok(())
     }
@@ -5952,7 +5886,6 @@ impl MilestoneEscrow {
             (symbol_short!("emoverrid"),),
             EmergencyPauseAdminOverrideEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
                 paused,
                 previous: current,
             },
@@ -6248,7 +6181,6 @@ impl MilestoneEscrow {
             (symbol_short!("pf_ovr"),),
             PlatformFeeAllocationOverrideEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
                 client_bps,
                 freelancer_bps,
                 treasury_bps,
@@ -6581,7 +6513,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("p_strcns"),),
                 PaymentStreamingConsentEvent {
-                    contract_id: contract_addr,
                     milestone_index,
                     client: meta.client.clone(),
                     freelancer: meta.freelancer.clone(),
@@ -6785,7 +6716,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("m_extcns"),),
             TimeExtConsentEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -8755,7 +8685,6 @@ impl MilestoneEscrow {
             (symbol_short!("admovrls"),),
             AdminOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -8858,7 +8787,6 @@ impl MilestoneEscrow {
             (symbol_short!("admovrf"),),
             AdminOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,
@@ -8979,7 +8907,6 @@ impl MilestoneEscrow {
             (symbol_short!("admstrm"),),
             AdminOverrideStreamingReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -9040,13 +8967,8 @@ impl MilestoneEscrow {
 
         env.storage().instance().set(&DataKey::Paused, &true);
 
-        env.events().publish(
-            (symbol_short!("pause"),),
-            EscrowPausedEvent {
-                admin,
-                contract_id: env.current_contract_address(),
-            },
-        );
+        env.events()
+            .publish((symbol_short!("pause"),), EscrowPausedEvent { admin });
 
         Ok(())
     }
@@ -9106,7 +9028,6 @@ impl MilestoneEscrow {
                 (symbol_short!("resume"),),
                 EscrowResumedEvent {
                     admin: admin.clone(),
-                    contract_id: env.current_contract_address(),
                 },
             );
 
@@ -9222,7 +9143,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("taxwith"),),
             TaxWithholdingAppliedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 gross_amount,
                 tax_amount,
@@ -9481,7 +9401,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtxrls"),),
             AdminOverrideTaxReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -9557,7 +9476,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtxrfd"),),
             AdminOverrideTaxRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,
@@ -9657,7 +9575,6 @@ impl MilestoneEscrow {
             .persistent()
             .remove(&DataKey::TaxWithholdingLock(milestone_index));
 
-        let contract_addr = env.current_contract_address();
         let token_client = token::Client::new(&env, &meta.token);
         if allocation.client_refund > 0 {
             Self::pay_or_credit(&env, &token_client, &meta.client, &allocation.client_refund)?;
@@ -9675,7 +9592,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtwsplt"),),
             AdminOverrideTaxSplitRefundEvent {
                 admin,
-                contract_id: contract_addr,
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -9828,7 +9744,6 @@ impl MilestoneEscrow {
             (symbol_short!("taxwh"),),
             TaxWithholdingDeductionsEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 gross_amount,
                 tax_amount,
@@ -9985,7 +9900,6 @@ impl MilestoneEscrow {
             (symbol_short!("msadmrel"),),
             MultisigAdminOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -10100,7 +10014,6 @@ impl MilestoneEscrow {
             (symbol_short!("msadmref"),),
             MultisigAdminOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,

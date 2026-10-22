@@ -1471,7 +1471,6 @@ fn test_resolve_dispute_emits_structured_event() {
                 assert_eq!(
                     DisputeResolvedEvent::from_val(&env, &event.2),
                     DisputeResolvedEvent {
-                        contract_id: contract_id.clone(),
                         milestone_index: 0,
                         arbiter: arbiter_addr.clone(),
                         client: client_addr.clone(),
@@ -1683,7 +1682,6 @@ fn test_fund_emits_structured_event() {
                 assert_eq!(
                     FundedEvent::from_val(&env, &event.2),
                     FundedEvent {
-                        contract_id: contract_id.clone(),
                         client: client_addr.clone(),
                         freelancer: freelancer_addr.clone(),
                         arbiter: arbiter_addr.clone(),
@@ -3743,7 +3741,7 @@ fn test_multisig_admin_override_release_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, freelancer_addr, _, admin_addr, token_id, contract_id, client) =
+    let (_, freelancer_addr, _, admin_addr, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     client.multisig_lock(&admin_addr);
@@ -3758,7 +3756,6 @@ fn test_multisig_admin_override_release_emits_event() {
                 assert_eq!(event.1.len(), 1);
                 let ev = MultisigAdminOverrideReleaseEvent::from_val(&env, &event.2);
                 assert_eq!(ev.admin, admin_addr);
-                assert_eq!(ev.contract_id, contract_id);
                 assert_eq!(ev.milestone_index, 0);
                 assert_eq!(ev.freelancer, freelancer_addr);
                 assert_eq!(ev.token, token_id);
@@ -3775,7 +3772,7 @@ fn test_multisig_admin_override_refund_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, _, _, admin_addr, token_id, contract_id, client) =
+    let (client_addr, _, _, admin_addr, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     client.multisig_lock(&admin_addr);
@@ -3790,7 +3787,6 @@ fn test_multisig_admin_override_refund_emits_event() {
                 assert_eq!(event.1.len(), 1);
                 let ev = MultisigAdminOverrideRefundEvent::from_val(&env, &event.2);
                 assert_eq!(ev.admin, admin_addr);
-                assert_eq!(ev.contract_id, contract_id);
                 assert_eq!(ev.milestone_index, 0);
                 assert_eq!(ev.client, client_addr);
                 assert_eq!(ev.token, token_id);
@@ -8046,7 +8042,7 @@ fn test_pf_alloc_admin_override_event_reconciles_with_persisted_state() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (admin_addr, contract_id, client) = setup_locked_pf_alloc(&env);
+    let (admin_addr, _, client) = setup_locked_pf_alloc(&env);
 
     client.pf_alloc_admin_override(&admin_addr, &1500_u32, &7500_u32, &1000_u32);
 
@@ -8055,7 +8051,6 @@ fn test_pf_alloc_admin_override_event_reconciles_with_persisted_state() {
 
     // Acting address + contract identity.
     assert_eq!(ev.admin, admin_addr);
-    assert_eq!(ev.contract_id, contract_id);
 
     // Every value field equals the allocation the call persisted.
     let persisted = client.get_platform_fee_allocation();
@@ -12640,7 +12635,7 @@ fn test_cancel_escrow_emits_structured_event() {
     env.mock_all_auths();
 
     let amounts = vec![&env, 2_000_i128];
-    let (client_addr, freelancer_addr, _, _, token_contract_id, contract_id, client) =
+    let (client_addr, freelancer_addr, _, _, token_contract_id, _, client) =
         setup_funded_escrow(&env, amounts);
 
     client.cancel_escrow(&client_addr);
@@ -12657,7 +12652,6 @@ fn test_cancel_escrow_emits_structured_event() {
                 assert_eq!(
                     CancelEscrowInitiatedEvent::from_val(&env, &event.2),
                     CancelEscrowInitiatedEvent {
-                        contract_id: contract_id.clone(),
                         caller: freelancer_addr.clone(),
                         caller_is_client: false,
                         client: client_addr.clone(),
@@ -13262,7 +13256,6 @@ fn test_pf_alloc_admin_override_emits_structured_event() {
                     PlatformFeeAllocationOverrideEvent::from_val(&env, &event.2),
                     PlatformFeeAllocationOverrideEvent {
                         admin: admin_addr.clone(),
-                        contract_id: contract_id.clone(),
                         client_bps: 1000,
                         freelancer_bps: 8000,
                         treasury_bps: 1000,

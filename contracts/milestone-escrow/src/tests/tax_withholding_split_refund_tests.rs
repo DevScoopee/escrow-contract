@@ -472,7 +472,7 @@ fn test_admin_override_tax_split_refund_event_reconciles_with_transfers() {
     let env = test_env();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, admin_addr, token_addr, contract_id, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, token_addr, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     let client_before = token_balance(&env, &token_addr, &client_addr);
@@ -486,7 +486,6 @@ fn test_admin_override_tax_split_refund_event_reconciles_with_transfers() {
     let ev = events.first().unwrap();
 
     assert_eq!(ev.admin, admin_addr);
-    assert_eq!(ev.contract_id, contract_id);
     assert_eq!(ev.milestone_index, 0);
     assert_eq!(ev.client, client_addr);
     assert_eq!(ev.freelancer, freelancer_addr);

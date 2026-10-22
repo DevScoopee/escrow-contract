@@ -191,7 +191,6 @@ fn pause_sets_flag_emits_event_and_clears_lock() {
     assert_eq!(pause_event_count(&env), 1);
     let event = last_pause_event(&env);
     assert_eq!(event.admin, admin);
-    assert_eq!(event.contract_id, contract_id);
 
     // Paused flag set.
     assert!(is_paused(&env, &contract_id));
