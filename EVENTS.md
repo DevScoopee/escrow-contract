@@ -27,6 +27,7 @@ row here, and a row here must correspond to a topic in the source.
 | `cxlappr`  | `CancelApprovalRecordedEvent`    | state change      |
 | `cancelrev`| `CancelApprovalRevokedEvent`     | state change      |
 | `upgrade`  | `ContractUpgradedEvent`          | state change      |
+| `migrate`  | `MigratedEvent`                  | state change      |
 | `wtok`     | `TokenWhitelistedEvent`          | state change      |
 | `wldel`    | `TokenRemovedEvent`              | state change      |
 | `pause`    | `EscrowPausedEvent`              | state change      |

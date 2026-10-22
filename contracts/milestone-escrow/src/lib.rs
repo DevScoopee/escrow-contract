@@ -9,7 +9,7 @@
 #![allow(clippy::redundant_closure_call)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
-    ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
+    ContractExecutable, Env, IntoVal, Map, Symbol, TryFromVal, Val, Vec,
 };
 
 /// Maximum number of ratio slots accepted by `compute_ratio_allocation`.
@@ -168,6 +168,12 @@ pub enum Error {
     /// arbiter == client, arbiter == freelancer, or client == freelancer —
     /// removes an independent check-and-balance and is rejected.
     InvalidParties = 44,
+    /// A state-changing endpoint was called on a deployment whose storage is
+    /// older than this code (`schema_version() < SCHEMA_VERSION`), i.e. after
+    /// `upgrade` but before `migrate`.  The admin must call `migrate` first.
+    MigrationRequired = 45,
+    /// `migrate` was called on storage that is already at `SCHEMA_VERSION`.
+    AlreadyMigrated = 46,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -188,6 +194,17 @@ const SECONDS_PER_YEAR: i128 = 31_536_000;
 
 /// Basis-point denominator for interest math (`1 bp = 1 / 10_000`).
 const BPS_DENOMINATOR: i128 = 10_000;
+
+/// Storage layout this code reads and writes.  Bump it whenever a stored
+/// type changes shape, and teach `migrate` the step up from the previous
+/// layout.
+///
+/// * `1` – `Milestone` without `spec_hash`; whitelist, multisig, yield and fee
+///   configuration in instance storage.  Deployments that predate
+///   `DataKey::SchemaVersion` are read as this version.
+/// * `2` – `Milestone::spec_hash` (#767); that configuration in persistent
+///   storage (#772).
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -213,6 +230,18 @@ pub struct Milestone {
     /// committed at `initialize` (#767). Kept on the milestone itself so
     /// committing it costs no extra ledger write per milestone.
     pub spec_hash: BytesN<32>,
+}
+
+/// `Milestone` as stored by schema version 1, before `spec_hash` (#767).
+/// Only `migrate` reads it.
+#[contracttype]
+#[derive(Clone, Debug)]
+struct MilestoneV1 {
+    amount: i128,
+    released_amount: i128,
+    status: MilestoneStatus,
+    delivered_at: u64,
+    funded: bool,
 }
 
 #[contracttype]
@@ -486,6 +515,12 @@ pub enum DataKey {
     /// Instance: ledger timestamp at which `fund` ran.  Starts the
     /// `ACCEPTANCE_WINDOW_SECONDS` window checked by `withdraw_unaccepted`.
     FundedAt,
+    /// Instance: storage layout version (`SCHEMA_VERSION`) the stored entries
+    /// follow.  Written by `initialize` and `migrate`.  Absent on deployments
+    /// created before it existed, which are schema 1.  Unlike `Version`
+    /// (bumped by every `upgrade`), it only moves when `migrate` rewrites
+    /// storage.
+    SchemaVersion,
 }
 
 #[contracttype]
@@ -1516,6 +1551,16 @@ pub struct ContractUpgradedEvent {
 }
 
 pub type UpgradeEvent = ContractUpgradedEvent;
+
+/// Emitted by `migrate` when stored entries were rewritten from
+/// `from_version` to `to_version` (`SCHEMA_VERSION`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigratedEvent {
+    pub admin: Address,
+    pub from_version: u32,
+    pub to_version: u32,
+}
 
 #[contract]
 pub struct MilestoneEscrow;
@@ -3007,6 +3052,9 @@ impl MilestoneEscrow {
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Version, &1u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &SCHEMA_VERSION);
 
         let mut whitelist: Vec<Address> = Vec::new(&env);
         whitelist.push_back(token.clone());
@@ -3118,6 +3166,7 @@ impl MilestoneEscrow {
         current_admin: Address,
         new_admin: Address,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         current_admin.require_auth();
@@ -3223,6 +3272,7 @@ impl MilestoneEscrow {
     ///   capacity cap. This guards against unbounded `Vec` growth and `u32`
     ///   length-counter overflow.
     pub fn add_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let zero_account = Address::from_str(
@@ -3295,6 +3345,7 @@ impl MilestoneEscrow {
     /// * `TokenNotWhitelisted` - The whitelist is empty, or the provided `token` is not present in the whitelist.
     /// * `InvalidAmount`       - Removing the token would leave the whitelist empty (the contract requires at least one token to remain).
     pub fn remove_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let stored_admin: Address = env
@@ -3416,6 +3467,7 @@ impl MilestoneEscrow {
     /// * `InvalidAmount`    – The total milestone amount is invalid (e.g.
     ///                        overflow or non-positive).
     pub fn fund(env: Env, client: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3469,6 +3521,7 @@ impl MilestoneEscrow {
 
     /// Fund a single milestone when the escrow uses `FundingMode::PerMilestone`.
     pub fn fund_milestone(env: Env, client: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3558,6 +3611,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `freelancer` does not match the job's freelancer.
     /// * `InvalidStatus`  – The freelancer has already accepted.
     pub fn accept_job(env: Env, freelancer: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         freelancer.require_auth();
         let meta = Self::load_job_meta(&env)?;
         if meta.freelancer != freelancer {
@@ -3576,6 +3630,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `arbiter` does not match the job's arbiter.
     /// * `InvalidStatus`  – The arbiter has already accepted.
     pub fn accept_arbiter(env: Env, arbiter: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         arbiter.require_auth();
         let meta = Self::load_job_meta(&env)?;
         if meta.arbiter != arbiter {
@@ -3601,6 +3656,7 @@ impl MilestoneEscrow {
     /// * `DeadlineNotPassed`       – The acceptance window is still open.
     /// * `InvalidAmount`           – Nothing remains to refund.
     pub fn withdraw_unaccepted(env: Env, client: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         client.require_auth();
         let meta = Self::load_job_meta(&env)?;
@@ -3697,6 +3753,7 @@ impl MilestoneEscrow {
         freelancer: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3775,6 +3832,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         note_hash: BytesN<32>,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3853,6 +3911,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         extra_seconds: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::assert_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3928,6 +3987,7 @@ impl MilestoneEscrow {
         freelancer: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4106,6 +4166,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         amount: i128,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4225,6 +4286,7 @@ impl MilestoneEscrow {
     /// * `InvalidAmount`    – The milestone's remaining balance is not
     ///                        positive.
     pub fn approve_milestone(env: Env, client: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4327,6 +4389,7 @@ impl MilestoneEscrow {
     /// * `NotInitialized` – Contract has not been initialized.
     /// * `InvalidAmount`  – Nothing is owed to `caller`.
     pub fn withdraw(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         caller.require_auth();
         let meta = Self::load_job_meta(&env)?;
 
@@ -4391,6 +4454,7 @@ impl MilestoneEscrow {
     /// * `NotAccepted`      – The freelancer or arbiter has not accepted the
     ///                        job.
     pub fn raise_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4530,6 +4594,7 @@ impl MilestoneEscrow {
     ///   dispute metadata is missing.
     /// * [`Error::DisputeTimeoutNotReached`] – The timeout has not elapsed.
     pub fn escalate_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4639,6 +4704,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         release_to_freelancer: bool,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4884,6 +4950,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         client_refund_bps: u32,
     ) -> Result<RefundAllocation, Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         let zero_account = Address::from_str(
             &env,
@@ -5047,6 +5114,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`  – `caller` has already recorded their approval in this
     ///                      round (duplicate single-party call).
     pub fn cancel_escrow(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let zero_account = Address::from_str(
             &env,
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -5163,6 +5231,7 @@ impl MilestoneEscrow {
     /// * `EscrowLocked`   – Both parties already approved; lock is active.
     /// * `InvalidStatus`  – `caller` has no recorded approval to revoke.
     pub fn revoke_cancel_approval(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let zero_account = Address::from_str(
             &env,
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -5255,6 +5324,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to pay out).
     pub fn admin_override_cancel_release(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Only valid when a cancel lock is active.
@@ -5359,6 +5429,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to refund).
     pub fn admin_override_cancel_refund(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Only valid when a cancel lock is active.
@@ -5500,20 +5571,106 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `admin` is not the stored admin.
     pub fn migrate_cold_config(env: Env, admin: Address) -> Result<u32, Error> {
         Self::require_admin(&env, &admin)?;
+        Ok(Self::move_cold_config(&env))
+    }
 
+    /// Bring storage written by an older version of this contract up to
+    /// `SCHEMA_VERSION`.
+    ///
+    /// # Upgrade procedure
+    /// 1. `upgrade(admin, new_wasm_hash)` installs the new code.  If the new
+    ///    code's `SCHEMA_VERSION` is higher than the stored
+    ///    `schema_version()`, every state-changing endpoint now returns
+    ///    `MigrationRequired`, so nothing can write entries in the old shape
+    ///    or misread them.  Read-only getters and `upgrade` itself still work.
+    /// 2. `migrate(admin)` rewrites the stored entries one schema step at a
+    ///    time and records `SCHEMA_VERSION`.  Normal operation resumes.
+    ///
+    /// Steps:
+    /// * `1 → 2`: every `Milestone` stored without `spec_hash` gains a zero
+    ///   `spec_hash` (#767), and the whitelist, multisig, yield and fee
+    ///   configuration moves to persistent storage (#772, as
+    ///   `migrate_cold_config`).  Milestones that already carry a `spec_hash`
+    ///   (deployments created after #767 but before the schema marker) are
+    ///   left as they are.
+    ///
+    /// Returns the new schema version and emits `("migrate",)` with a
+    /// `MigratedEvent`.
+    ///
+    /// # Errors
+    /// * `NotInitialized`  – Admin key has never been stored.
+    /// * `Unauthorized`    – `admin` is not the stored admin.
+    /// * `AlreadyMigrated` – Storage is already at `SCHEMA_VERSION`.
+    pub fn migrate(env: Env, admin: Address) -> Result<u32, Error> {
+        Self::require_admin(&env, &admin)?;
+        let from_version = Self::read_schema_version(&env);
+        if from_version >= SCHEMA_VERSION {
+            return Err(Error::AlreadyMigrated);
+        }
+
+        if from_version < 2 {
+            Self::migrate_milestones_to_v2(&env)?;
+            Self::move_cold_config(&env);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &SCHEMA_VERSION);
+        env.events().publish(
+            (symbol_short!("migrate"),),
+            MigratedEvent {
+                admin,
+                from_version,
+                to_version: SCHEMA_VERSION,
+            },
+        );
+        Ok(SCHEMA_VERSION)
+    }
+
+    /// Schema 1 → 2 for milestones: add a zero `spec_hash` to every entry
+    /// stored without one.
+    fn migrate_milestones_to_v2(env: &Env) -> Result<(), Error> {
+        let meta = Self::load_job_meta(env)?;
+        let persistent = env.storage().persistent();
+        let spec_hash_field = Symbol::new(env, "spec_hash");
+        for index in 0..meta.milestone_count {
+            let key = DataKey::Milestone(index);
+            // Decode the field map first: an entry that already has
+            // `spec_hash` would not decode as `MilestoneV1`.
+            let fields: Map<Symbol, Val> = persistent.get(&key).ok_or(Error::InvalidMilestone)?;
+            if fields.contains_key(spec_hash_field.clone()) {
+                continue;
+            }
+            let old: MilestoneV1 = persistent.get(&key).ok_or(Error::InvalidMilestone)?;
+            persistent.set(
+                &key,
+                &Milestone {
+                    amount: old.amount,
+                    released_amount: old.released_amount,
+                    status: old.status,
+                    delivered_at: old.delivered_at,
+                    funded: old.funded,
+                    spec_hash: BytesN::from_array(env, &[0u8; 32]),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Body of `migrate_cold_config`, shared with `migrate`.  Returns the
+    /// number of instance entries that were moved or folded.
+    fn move_cold_config(env: &Env) -> u32 {
         let mut moved = 0u32;
-        if Self::migrate_cold_entry::<Vec<Address>>(&env, &DataKey::WhitelistedTokens) {
+        if Self::migrate_cold_entry::<Vec<Address>>(env, &DataKey::WhitelistedTokens) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<MultiSigConfig>(&env, &DataKey::MultiSigConfig) {
+        if Self::migrate_cold_entry::<MultiSigConfig>(env, &DataKey::MultiSigConfig) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<EscrowInterestYieldState>(&env, &DataKey::InterestYieldState)
-        {
+        if Self::migrate_cold_entry::<EscrowInterestYieldState>(env, &DataKey::InterestYieldState) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<PlatformFeeAllocation>(&env, &DataKey::PlatformFeeAllocation)
-        {
+        if Self::migrate_cold_entry::<PlatformFeeAllocation>(env, &DataKey::PlatformFeeAllocation) {
             moved += 1;
         }
 
@@ -5533,7 +5690,7 @@ impl MilestoneEscrow {
             moved += 1;
         }
 
-        Ok(moved)
+        moved
     }
 
     /// Freeze the escrow: set `DataKey::Ep`, blocking every
@@ -5851,6 +6008,7 @@ impl MilestoneEscrow {
         freelancer_bps: u32,
         treasury_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Both the Admin read and all subsequent instance reads/writes touch
         // instance storage only, so the whole function uses a single ledger entry.
         Self::require_admin_from_instance(&env, &admin)?;
@@ -5932,6 +6090,7 @@ impl MilestoneEscrow {
     /// * `Error::NotInitialized` – no platform-fee allocation exists (inside the
     ///   execution lock guard).
     pub fn lock_platform_fee_allocation(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Perform all authorization and precondition checks before any ledger writes
         // so unauthorized callers and illegal source states are rejected without
         // mutating any storage entry.
@@ -5996,6 +6155,7 @@ impl MilestoneEscrow {
         freelancer_bps: u32,
         treasury_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let current: PlatformFeeAllocation = Self::load_platform_fee_allocation(&env)?;
@@ -6200,6 +6360,7 @@ impl MilestoneEscrow {
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: the caller must have signed this transaction. The
         // SDK aborts the call before any ledger access if the signature is
         // missing, so an unsigned attempt is rejected outright.
@@ -6288,6 +6449,7 @@ impl MilestoneEscrow {
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Reject illegal source state before any further ledger access.
         Self::assert_payment_streaming_not_locked(&env)?;
         Self::assert_not_paused(&env)?;
@@ -6424,6 +6586,7 @@ impl MilestoneEscrow {
         elapsed_seconds: i128,
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: the caller must have signed this transaction. The
         // SDK aborts the call before any ledger access if the signature is
         // missing, so an unsigned attempt is rejected outright.
@@ -6513,6 +6676,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         extra_seconds: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Reject illegal source state before collecting signatures so a
         // mistaken call never mutates storage.
         Self::assert_not_paused(&env)?;
@@ -6822,6 +6986,7 @@ impl MilestoneEscrow {
         signers: Vec<Address>,
         threshold: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin_from_instance(&env, &admin)?;
 
         // Either layout means the regime already exists: a contract upgraded
@@ -6937,6 +7102,7 @@ impl MilestoneEscrow {
         signer: Address,
         proposal_id: u32,
     ) -> Result<MultiSigApprovalState, Error> {
+        Self::ensure_migrated(&env)?;
         signer.require_auth();
 
         // Consolidated multisig config read (issue #456): the signer set and
@@ -7108,6 +7274,7 @@ impl MilestoneEscrow {
         new_admin: Address,
         proposal_id: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Storage-footprint note: `DataKey::Version` (instance) and
         // `DataKey::Admin` (persistent) are only ever written together, in a
         // single atomic `initialize` call — a failed `initialize` reverts the
@@ -7168,6 +7335,7 @@ impl MilestoneEscrow {
     /// * `MultiSigThresholdNotMet` – Approvals collected so far are below the
     ///   required threshold.
     pub fn execute_admin_transfer(env: Env) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Precondition guard: reject an uninitialised contract (no admin ever
         // stored, so nothing can be transferred) with `NotInitialized` before
         // any pending-transfer or approval storage is read or written.
@@ -7223,6 +7391,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`           – Caller is not the stored admin.
     /// * `NoPendingAdminTransfer` – Nothing is currently pending.
     pub fn cancel_admin_transfer_proposal(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let pending: PendingAdminTransfer = env
@@ -7347,6 +7516,36 @@ impl MilestoneEscrow {
         env.storage().instance().get(&DataKey::Version).unwrap_or(1)
     }
 
+    /// Return the storage layout version (see `SCHEMA_VERSION`).
+    ///
+    /// Lower than `SCHEMA_VERSION` after an `upgrade` until the admin calls
+    /// `migrate`; state-changing endpoints return `MigrationRequired` until
+    /// then.  Read-only; `1` on deployments that predate the marker.
+    pub fn schema_version(env: Env) -> u32 {
+        Self::read_schema_version(&env)
+    }
+
+    fn read_schema_version(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SchemaVersion)
+            .unwrap_or(1)
+    }
+
+    /// Reject state-changing calls until `migrate` has brought storage up to
+    /// `SCHEMA_VERSION`.  An uninitialized contract passes, so its endpoints
+    /// keep reporting `NotInitialized`.
+    fn ensure_migrated(env: &Env) -> Result<(), Error> {
+        let instance = env.storage().instance();
+        match instance.get::<_, u32>(&DataKey::SchemaVersion) {
+            Some(version) if version >= SCHEMA_VERSION => Ok(()),
+            Some(_) => Err(Error::MigrationRequired),
+            // `DataKey::Version` is the initialisation marker.
+            None if instance.has(&DataKey::Version) => Err(Error::MigrationRequired),
+            None => Ok(()),
+        }
+    }
+
     /// Return a full snapshot of the current job, including every
     /// milestone's status and amounts.
     ///
@@ -7363,6 +7562,7 @@ impl MilestoneEscrow {
     /// balance is returned to the client. Non-escrow tokens are returned in
     /// full to the client after confirming they are not the settlement token.
     pub fn sweep_excess(env: Env, caller: Address, token: Address) -> Result<i128, Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         caller.require_auth();
         let meta = Self::load_job_meta(&env)?;
@@ -7590,6 +7790,7 @@ impl MilestoneEscrow {
         client_share_bps: u32,
         freelancer_share_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: `admin.require_auth()` inside the helper makes the
         // host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
@@ -7663,6 +7864,7 @@ impl MilestoneEscrow {
         client_share_bps: u32,
         freelancer_share_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
         let meta = Self::load_job_meta(&env)?;
 
@@ -7760,6 +7962,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`    – `admin` does not match the stored admin.
     /// * `InvalidStatus`   – The interest/yield configuration is already locked.
     pub fn lock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Guard 1 — authorization. `admin.require_auth()` inside the helper makes
         // the host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
@@ -7805,6 +8008,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized` - Caller is not the stored admin.
     /// * `InvalidStatus` - Interest/yield lock is not active (already unlocked).
     pub fn unlock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
         Self::require_client_and_freelancer_consent(&env)?;
         let mut state = Self::load_interest_yield_state(&env)?;
@@ -8067,6 +8271,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `admin` does not match the stored admin key.
     /// * `InvalidRatio`   – `rate_bps` exceeds 10 000.
     pub fn admin_set_yield_rate(env: Env, admin: Address, rate_bps: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Precondition 1: contract must be fully initialised (job metadata
         // must exist).  This check runs before any auth or storage mutation so
         // that callers on an uninitialised contract receive `NotInitialized`
@@ -8163,6 +8368,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         accrued_amount: i128,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorize from instance storage so the admin read shares a ledger
         // entry with the `DataKey::Job` read below (see the rustdoc note).
         Self::require_admin_from_instance(&env, &admin)?;
@@ -8237,6 +8443,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
@@ -8337,6 +8544,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
@@ -8442,6 +8650,7 @@ impl MilestoneEscrow {
         elapsed_seconds: i128,
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
@@ -8687,6 +8896,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         tax_rate_bps: u32,
     ) -> Result<TaxWithholdingRecord, Error> {
+        Self::ensure_migrated(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         let meta = Self::load_job_meta(&env)?;
 
@@ -8971,6 +9181,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         if !env.storage().persistent().has(&DataKey::Admin) {
             return Err(Error::NotInitialized);
         }
@@ -9050,6 +9261,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let record: TaxWithholdingRecord = env
@@ -9139,6 +9351,7 @@ impl MilestoneEscrow {
         client_refund_bps: u32,
         freelancer_payout_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let record: TaxWithholdingRecord = env
@@ -9436,6 +9649,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         admin.require_auth();
@@ -9571,6 +9785,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
@@ -10420,6 +10635,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`  – The multisig workflow is already locked.
     /// * `EmergencyPauseInProgress` – An emergency pause lock is currently active.
     pub fn multisig_lock(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization check at top - require auth and admin role first
         Self::require_admin_from_instance(&env, &admin)?;
         // Precondition guards before any ledger write: validate illegal source state

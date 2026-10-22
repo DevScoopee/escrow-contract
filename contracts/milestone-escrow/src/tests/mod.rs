@@ -48,6 +48,7 @@ mod job_acceptance_tests;
 mod load_platform_fee_allocation_tests;
 mod lock_escrow_interest_yield_event_tests;
 mod lock_escrow_interest_yield_guards_tests;
+mod migrate_tests;
 mod milestone_spec_hash_tests;
 mod milestone_time_extensions_tests;
 mod multisig_admin_override_refund_tests;

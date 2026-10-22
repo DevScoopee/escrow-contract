@@ -115,10 +115,30 @@ Then record the contract ID, `source_commit` and `wasm_sha256` from
 `dist/build-info.json` in `deployments/<network>.json`, and the hash in
 `CHANGELOG.md`.
 
-After upgrading an existing deployment to this version, the admin should call
-`migrate_cold_config` once to move the whitelist, multisig, yield and fee
-configuration out of instance storage (issue #772). The contract keeps working
-before that call; the migration only makes every later call cheaper.
+### Upgrading a deployment: upgrade, then migrate
+
+Upgrading is always two admin calls, in this order:
+
+1. `upgrade(admin, new_wasm_hash)` installs the new code.
+2. `migrate(admin)` rewrites stored entries into the layout the new code
+   expects and records it.
+
+The contract stores the layout version it was written with
+(`schema_version()`), and the code declares the version it expects
+(`SCHEMA_VERSION`). Between the two calls they differ, and every
+state-changing endpoint returns `MigrationRequired` (error 45), so nothing
+can write an entry in the old shape or act on one misread. Getters, `upgrade`
+itself and the pause/unpause controls keep working, so an incident in that
+window can still be contained. Once `migrate` succeeds (it emits `migrate`
+with a `MigratedEvent`) normal operation resumes. Calling `migrate` again
+returns `AlreadyMigrated` (error 46). Deployments created before the marker
+existed are treated as schema 1.
+
+Schema 2 adds `spec_hash` to every stored `Milestone` (#767; old milestones
+get a zero hash) and moves the whitelist, multisig, yield and fee
+configuration out of instance storage (#772). A release that changes a stored
+type must bump `SCHEMA_VERSION` and add the step to `migrate`.
+`migrate_cold_config` remains for deployments that only need the #772 move.
 
 ## Verifying the deployed contract
 
