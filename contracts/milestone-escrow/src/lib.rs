@@ -5405,7 +5405,6 @@ impl MilestoneEscrow {
                 total_refunded = total_refunded
                     .checked_add(remaining)
                     .ok_or(Error::InvalidAmount)?;
-                milestone.released_amount = milestone.amount;
                 milestone.status = MilestoneStatus::Refunded;
                 Self::store_milestone(&env, index, &milestone);
             }
@@ -8369,7 +8368,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
         env.storage()
@@ -9076,7 +9074,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
 
@@ -9618,7 +9615,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
 

@@ -69,6 +69,7 @@ mod propose_admin_transfer_footprint_tests;
 mod pull_withdraw_tests;
 mod ratio_split_boundary_tests;
 mod read_path_tests;
+mod refund_released_amount_tests;
 mod reputation_no_mutation_tests;
 mod reputation_tests;
 mod revision_tests;

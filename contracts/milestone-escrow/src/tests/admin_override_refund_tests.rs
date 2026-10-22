@@ -139,7 +139,7 @@ fn admin_override_refund_refunds_client() {
 
     let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
     assert_eq!(after.status, MilestoneStatus::Refunded);
-    assert_eq!(after.released_amount, 1_000);
+    assert_eq!(after.released_amount, 0);
     assert_eq!(after.client_balance, before.client_balance + 1_000);
     assert_eq!(after.contract_balance, before.contract_balance - 1_000);
 }
