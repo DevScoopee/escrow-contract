@@ -50,6 +50,9 @@ row here, and a row here must correspond to a topic in the source.
 | `adtwsplt` | `AdminOverrideTaxSplitRefundEvent` | calculation     |
 | `arbsplit` | `ArbitrationSplitAppliedEvent`   | calculation       |
 | `msiginit` | `MultisigApprovalInitEvent`      | state change      |
+| `msigcfgp` | `MultiSigConfigProposedEvent`    | state change      |
+| `msigcfg`  | `MultiSigConfigChangedEvent`     | state change      |
+| `msigcfgx` | `MultiSigConfigCancelledEvent`   | state change      |
 | `msigappr` | `MultiSigApprovedEvent`          | state change      |
 | `mslock`   | `MultisigLockedEvent`            | state change      |
 | `msadmrel` | `MultisigAdminOverrideReleaseEvent` | state change   |

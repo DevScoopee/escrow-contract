@@ -56,6 +56,7 @@ mod multisig_approval_init_event_tests;
 mod multisig_approval_init_footprint_tests;
 mod multisig_approve_checked_arithmetic_tests;
 mod multisig_approve_footprint_tests;
+mod multisig_config_rotation_tests;
 mod multisig_error_branches_tests;
 mod multisig_legacy_config_tests;
 mod multisig_lock_auth_tests;

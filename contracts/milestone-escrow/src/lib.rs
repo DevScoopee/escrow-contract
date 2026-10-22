@@ -174,6 +174,15 @@ pub enum Error {
     MigrationRequired = 45,
     /// `migrate` was called on storage that is already at `SCHEMA_VERSION`.
     AlreadyMigrated = 46,
+    /// `propose_multisig_config` was called while another signer-set change
+    /// is pending; execute or cancel it first.
+    MultiSigConfigPending = 47,
+    /// `execute_multisig_config` / `cancel_multisig_config_proposal` found no
+    /// pending signer-set change.
+    NoPendingMultiSigConfig = 48,
+    /// The proposal id already carries approvals or belongs to the pending
+    /// admin transfer, so a new proposal under it would start out approved.
+    ProposalIdInUse = 49,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -419,6 +428,12 @@ pub enum DataKey {
     /// Key type: `u32` (the proposal index) — significantly smaller than a
     /// composite `(Address, u32)` alternative.
     MultiSigApproval(u32),
+    /// Temporary: the same approval bitmap, for proposal `.1` under signer-set
+    /// generation `.0` (≥ 1, i.e. after an `execute_multisig_config`
+    /// rotation).  Bits index the signer vec, so a rotation must not reuse
+    /// the previous set's bitmaps; generation 0 keeps the `MultiSigApproval`
+    /// key.
+    MultiSigApprovalGen(u32, u32),
     // ── dispute_arbitration_split compact storage keys ─────────────────────
     /// Temporary: records the client-refund BPS applied by
     /// `apply_dispute_arbitration_split` for a given milestone.
@@ -521,6 +536,13 @@ pub enum DataKey {
     /// (bumped by every `upgrade`), it only moves when `migrate` rewrites
     /// storage.
     SchemaVersion,
+    /// Instance: number of signer-set rotations applied by
+    /// `execute_multisig_config`.  Absent means 0.  Selects the approval
+    /// bitmap key (see `MultiSigApprovalGen`).
+    MultiSigGeneration,
+    /// Persistent: the signer-set change awaiting approval
+    /// (`propose_multisig_config`).
+    PendingMultiSigConfig,
 }
 
 #[contracttype]
@@ -1294,6 +1316,48 @@ pub struct MultiSigApprovedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingAdminTransfer {
     pub new_admin: Address,
+    pub proposal_id: u32,
+}
+
+/// A signer-set change awaiting approval by the current signers, recorded by
+/// `propose_multisig_config` and applied by `execute_multisig_config`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingMultiSigConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+    pub proposal_id: u32,
+}
+
+/// Emitted (`msigcfgp`) by `propose_multisig_config`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigProposedEvent {
+    pub admin: Address,
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+    pub proposal_id: u32,
+}
+
+/// Emitted (`msigcfg`) by `execute_multisig_config` when the signer set and
+/// threshold were replaced.  `generation` is the new approval generation:
+/// approvals recorded before it no longer count.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigChangedEvent {
+    pub old_signers: Vec<Address>,
+    pub old_threshold: u32,
+    pub new_signers: Vec<Address>,
+    pub new_threshold: u32,
+    pub proposal_id: u32,
+    pub generation: u32,
+}
+
+/// Emitted (`msigcfgx`) by `cancel_multisig_config_proposal`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigCancelledEvent {
+    pub admin: Address,
     pub proposal_id: u32,
 }
 
@@ -7135,7 +7199,7 @@ impl MilestoneEscrow {
         let mut bitmap: u32 = env
             .storage()
             .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
+            .get(&Self::approval_key(&env, proposal_id))
             .unwrap_or(0);
 
         // ── Turn the signer's index into its bitmap bit (issue #583) ─────────
@@ -7170,7 +7234,7 @@ impl MilestoneEscrow {
             bitmap = bitmap.checked_add(mask).ok_or(Error::ArithmeticOverflow)?;
             env.storage()
                 .temporary()
-                .set(&DataKey::MultiSigApproval(proposal_id), &bitmap);
+                .set(&Self::approval_key(&env, proposal_id), &bitmap);
         }
 
         let approvals = bitmap.count_ones();
@@ -7235,7 +7299,7 @@ impl MilestoneEscrow {
         let bitmap: u32 = env
             .storage()
             .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
+            .get(&Self::approval_key(env, proposal_id))
             .unwrap_or(0);
 
         let approvals = bitmap.count_ones();
@@ -7413,6 +7477,195 @@ impl MilestoneEscrow {
         );
 
         Ok(())
+    }
+
+    // ── multisig signer-set rotation ───────────────────────────────────────
+    //
+    // `multisig_approval_init` can only run once, so rotating signers (a
+    // lost key, a departing operator) or changing the threshold goes through
+    // the same proposal/approval flow as an admin transfer: the admin
+    // proposes, the *current* signers approve the proposal id up to the
+    // current threshold, and anyone executes.
+    //
+    // Approval bitmaps index the signer vec, so bit `i` names a different
+    // address after a rotation.  Each rotation therefore bumps
+    // `DataKey::MultiSigGeneration`, and approvals are kept under a key that
+    // includes the generation (`approval_key`).  Approvals collected before
+    // the rotation, including those for the rotation itself and for a
+    // pending admin transfer, no longer count; the new signers have to
+    // approve again.
+
+    /// Temporary-storage key of `proposal_id`'s approval bitmap under the
+    /// current signer-set generation.  Generation 0 (no rotation yet) keeps
+    /// the original `MultiSigApproval` key, so existing bitmaps and footprints
+    /// are unchanged.
+    fn approval_key(env: &Env, proposal_id: u32) -> DataKey {
+        match env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::MultiSigGeneration)
+        {
+            None | Some(0) => DataKey::MultiSigApproval(proposal_id),
+            Some(generation) => DataKey::MultiSigApprovalGen(generation, proposal_id),
+        }
+    }
+
+    /// Propose replacing the multisig signer set and threshold.
+    ///
+    /// The new configuration is validated like `multisig_approval_init`'s and
+    /// recorded as pending.  It takes effect through `execute_multisig_config`
+    /// once the current signers have approved `proposal_id` up to the current
+    /// threshold.  Emits `msigcfgp`.
+    ///
+    /// # Errors
+    /// * `NotInitialized`           – Contract not initialised, or no multisig
+    ///   regime exists yet (use `multisig_approval_init`).
+    /// * `Unauthorized`             – `admin` is not the stored admin.
+    /// * `MultiSigNoSigners` / `MultiSigTooManySigners` /
+    ///   `MultiSigInvalidThreshold` / `MultiSigDuplicateSigner` – the new
+    ///   configuration is invalid (`validate_multisig_setup`).
+    /// * `MultiSigConfigPending`    – Another change is already pending.
+    /// * `ProposalIdInUse`          – `proposal_id` already has approvals or
+    ///   is the pending admin transfer's id.
+    pub fn propose_multisig_config(
+        env: Env,
+        admin: Address,
+        new_signers: Vec<Address>,
+        new_threshold: u32,
+        proposal_id: u32,
+    ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        Self::require_admin(&env, &admin)?;
+        Self::load_multisig_config(&env).ok_or(Error::NotInitialized)?;
+        Self::validate_multisig_setup(&new_signers, new_threshold)?;
+
+        let persistent = env.storage().persistent();
+        if persistent.has(&DataKey::PendingMultiSigConfig) {
+            return Err(Error::MultiSigConfigPending);
+        }
+        if Self::read_multisig_approval(&env, proposal_id)?.approvals > 0 {
+            return Err(Error::ProposalIdInUse);
+        }
+        if let Some(transfer) =
+            persistent.get::<_, PendingAdminTransfer>(&DataKey::PendingAdminTransfer)
+        {
+            if transfer.proposal_id == proposal_id {
+                return Err(Error::ProposalIdInUse);
+            }
+        }
+
+        persistent.set(
+            &DataKey::PendingMultiSigConfig,
+            &PendingMultiSigConfig {
+                signers: new_signers.clone(),
+                threshold: new_threshold,
+                proposal_id,
+            },
+        );
+
+        env.events().publish(
+            (symbol_short!("msigcfgp"),),
+            MultiSigConfigProposedEvent {
+                admin,
+                signers: new_signers,
+                threshold: new_threshold,
+                proposal_id,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Apply the pending signer-set change once its proposal has reached the
+    /// current threshold.  Any caller may trigger it; the approvals are the
+    /// authorization.  Starts a new approval generation, so no approval
+    /// recorded under the old signer set counts afterwards.  Emits `msigcfg`.
+    ///
+    /// # Errors
+    /// * `NoPendingMultiSigConfig` – Nothing is pending.
+    /// * `NotInitialized`          – No multisig regime exists.
+    /// * `MultiSigThresholdNotMet` – The current signers have not approved
+    ///   the proposal up to the current threshold.
+    /// * `ArithmeticOverflow`      – The generation counter is exhausted.
+    pub fn execute_multisig_config(env: Env) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        let persistent = env.storage().persistent();
+        let pending: PendingMultiSigConfig = persistent
+            .get(&DataKey::PendingMultiSigConfig)
+            .ok_or(Error::NoPendingMultiSigConfig)?;
+        let MultiSigConfig(old_signers, old_threshold) =
+            Self::load_multisig_config(&env).ok_or(Error::NotInitialized)?;
+
+        if !Self::read_multisig_approval(&env, pending.proposal_id)?.approved {
+            return Err(Error::MultiSigThresholdNotMet);
+        }
+
+        let instance = env.storage().instance();
+        let generation = instance
+            .get::<_, u32>(&DataKey::MultiSigGeneration)
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+
+        persistent.set(
+            &DataKey::MultiSigConfig,
+            &MultiSigConfig(pending.signers.clone(), pending.threshold),
+        );
+        // Drop any pre-#772 / pre-#456 instance copies so no read path can
+        // fall back to the old set.
+        instance.remove(&DataKey::MultiSigConfig);
+        instance.remove(&DataKey::MultiSigSigners);
+        instance.remove(&DataKey::MultiSigThreshold);
+        instance.set(&DataKey::MultiSigGeneration, &generation);
+        persistent.remove(&DataKey::PendingMultiSigConfig);
+
+        env.events().publish(
+            (symbol_short!("msigcfg"),),
+            MultiSigConfigChangedEvent {
+                old_signers,
+                old_threshold,
+                new_signers: pending.signers,
+                new_threshold: pending.threshold,
+                proposal_id: pending.proposal_id,
+                generation,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Withdraw the pending signer-set change.  Admin only.  Emits
+    /// `msigcfgx`.
+    ///
+    /// # Errors
+    /// * `NotInitialized`          – Contract not initialised.
+    /// * `Unauthorized`            – `admin` is not the stored admin.
+    /// * `NoPendingMultiSigConfig` – Nothing is pending.
+    pub fn cancel_multisig_config_proposal(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        Self::require_admin(&env, &admin)?;
+        let persistent = env.storage().persistent();
+        let pending: PendingMultiSigConfig = persistent
+            .get(&DataKey::PendingMultiSigConfig)
+            .ok_or(Error::NoPendingMultiSigConfig)?;
+        persistent.remove(&DataKey::PendingMultiSigConfig);
+
+        env.events().publish(
+            (symbol_short!("msigcfgx"),),
+            MultiSigConfigCancelledEvent {
+                admin,
+                proposal_id: pending.proposal_id,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Return the pending signer-set change, if any.  Read-only.
+    pub fn get_pending_multisig_config(env: Env) -> Option<PendingMultiSigConfig> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingMultiSigConfig)
     }
 
     /// Return the currently pending admin-transfer proposal, if any.
