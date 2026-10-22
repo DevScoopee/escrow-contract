@@ -28,6 +28,18 @@ Disputed → Released (arbiter favors freelancer)
 
 → Refunded (arbiter favors client)
 
+## Administrative Roles
+
+Roles are assigned per escrow by the current root admin with `set_admin_role`. Each role initially resolves to the root admin, preserving existing behavior until changed. Assign the root admin address again to restore that default.
+
+| Role | Permissions |
+|---|---|
+| `upgrader` | Upgrade the contract WASM. Use a cold, timelocked key. |
+| `operator` | Pause and resume the escrow, including emergency pause controls. |
+| `fee_manager` | Manage fees, yield, tax settings, and the token whitelist. |
+| `resolver` | Resolve stuck payouts, overrides, and multisig administration. Overrides of a disputed milestone are unavailable until seven days after the dispute was raised. |
+| root admin | Assign roles and manage the root-admin transfer workflow. |
+
 ## Prerequisites
 
 - https://rustup.rs/  1.79+
