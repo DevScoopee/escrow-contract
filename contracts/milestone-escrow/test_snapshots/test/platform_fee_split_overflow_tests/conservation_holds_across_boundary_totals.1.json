@@ -260,6 +260,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "funded"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "released_amount"
                     },
                     "val": {
@@ -277,6 +285,91 @@
                         }
                       ]
                     }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "PlatformFeeAllocation"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "client_bps"
+                    },
+                    "val": {
+                      "u32": 3333
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "freelancer_bps"
+                    },
+                    "val": {
+                      "u32": 4667
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "locked"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "treasury_bps"
+                    },
+                    "val": {
+                      "u32": 2000
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "WhitelistedTokens"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "vec": [
+                  {
+                    "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
                   }
                 ]
               }
@@ -329,6 +422,22 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "FundingMode"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "Upfront"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "Job"
                           }
                         ]
@@ -357,6 +466,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {
@@ -406,51 +523,6 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "PlatformFeeAllocation"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "map": [
-                          {
-                            "key": {
-                              "symbol": "client_bps"
-                            },
-                            "val": {
-                              "u32": 3333
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "freelancer_bps"
-                            },
-                            "val": {
-                              "u32": 4667
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "locked"
-                            },
-                            "val": {
-                              "bool": false
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "treasury_bps"
-                            },
-                            "val": {
-                              "u32": 2000
-                            }
-                          }
-                        ]
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "PlatformFeeAllocationLock"
                           }
                         ]
@@ -469,22 +541,6 @@
                       },
                       "val": {
                         "u32": 1
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "WhitelistedTokens"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "vec": [
-                          {
-                            "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
-                          }
-                        ]
                       }
                     }
                   ]
