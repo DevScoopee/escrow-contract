@@ -17,6 +17,18 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 
 `initialize` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
+### What the admin can do
+
+- Pause and resume the escrow (`admin_pause_escrow`, `admin_resume_escrow`).
+- Override-release or override-refund a milestone **only when** the milestone is `Disputed` (arbiter unreachable or timed out) **or** the two-party cancel lock is active. Overriding a `Pending`, `Delivered`, or `PartiallyReleased` milestone that has no open dispute is rejected with `InvalidStatus`.
+- Override a streaming-release split on a `Disputed` milestone (`admin_override_streaming_release`).
+- Manage token whitelists and upgrades.
+
+### What the admin cannot do
+
+- Release or refund a milestone that has not been disputed and has no cancel lock active — the arbiter's role is preserved for normal settlement.
+- Act as a unilateral custodian: admin overrides require a genuine deadlock (dispute or cancel) before they fire.
+
 ## Contract Functions
 
 | Function | Caller | Description |

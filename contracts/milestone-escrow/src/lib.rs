@@ -8207,15 +8207,14 @@ impl MilestoneEscrow {
     /// Force-release a locked milestone directly to the freelancer, bypassing
     /// the normal `mark_delivered` → `approve_milestone` flow.
     ///
-    /// This is the primary remedy for an escrow where the client is
-    /// unresponsive or has lost their key after the freelancer has completed
-    /// the work.  The milestone is moved to `Released` and a full token
-    /// transfer is executed.
+    /// This is the remedy for an escrow where normal settlement is impossible:
+    /// the milestone must be `Disputed` (arbiter is unreachable or timed out),
+    /// or the cancel lock must be active (`CancelLock == true`).  Using this
+    /// outside those conditions — e.g. on a `Pending` or `Delivered` milestone
+    /// that has no open dispute — returns `InvalidStatus`.
     ///
-    /// The override works on any non-terminal milestone status (Pending,
-    /// Delivered, PartiallyReleased, Disputed).  Calling it on an already
-    /// `Released` or `Refunded` milestone — where the funds have already left
-    /// the contract — returns `InvalidStatus` to prevent a double-spend.
+    /// The milestone is moved to `Released` and a full token transfer is
+    /// executed to the freelancer.
     ///
     /// # Parameters
     /// * `admin`           – Must match `DataKey::Admin`.
@@ -8224,9 +8223,12 @@ impl MilestoneEscrow {
     /// # Errors
     /// * `NotInitialized`  – Contract has not been initialised.
     /// * `Unauthorized`    – `admin` is not the stored admin.
+    /// * `Paused`          – Contract is administratively paused.
     /// * `NotFunded`       – Escrow has not been funded; nothing to release.
     /// * `InvalidMilestone`– `milestone_index` is out of range.
-    /// * `InvalidStatus`   – Milestone is already `Released` or `Refunded`.
+    /// * `InvalidStatus`   – Milestone is already `Released` or `Refunded`, or
+    ///                       it is not in `Disputed` status and no cancel lock
+    ///                       is active.
     /// * `InvalidAmount`   – Remaining balance is ≤ 0, or the subtraction
     ///                       `amount − released_amount` overflows `i128`
     ///                       (e.g. when `released_amount > amount`).  All
@@ -8238,6 +8240,10 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::require_admin(&env, &admin)?;
+
+        // Reject calls while the contract is administratively paused so that
+        // a suspended escrow cannot have funds moved through the override path.
+        Self::assert_not_paused(&env)?;
 
         let meta = Self::load_job_meta(&env)?;
         Self::require_escrow_has_funding(&env, &meta)?;
@@ -8252,6 +8258,21 @@ impl MilestoneEscrow {
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
         {
+            return Err(Error::InvalidStatus);
+        }
+
+        // Gate: only intervene when the normal settlement path is genuinely
+        // blocked.  The milestone must be Disputed (arbiter is unreachable or
+        // the dispute timed out without resolution), or the two-party cancel
+        // lock must be active.  Overriding a Pending, Delivered, or
+        // PartiallyReleased milestone that has no open dispute bypasses the
+        // arbiter entirely and makes the admin a unilateral custodian.
+        let cancel_locked = env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::CancelLock)
+            .unwrap_or(false);
+        if milestone.status != MilestoneStatus::Disputed && !cancel_locked {
             return Err(Error::InvalidStatus);
         }
 
@@ -8309,12 +8330,14 @@ impl MilestoneEscrow {
     /// Force-refund a locked milestone back to the client, bypassing the normal
     /// dispute/resolution flow.
     ///
-    /// Use this when the freelancer is unresponsive, the work was never
-    /// delivered, or the arbiter cannot be reached.  The milestone is moved to
-    /// `Refunded` and a full token transfer is executed back to the client.
+    /// Use this when normal settlement is impossible: the milestone must be
+    /// `Disputed` (arbiter is unreachable or the dispute timed out), or the
+    /// two-party cancel lock must be active.  Using this outside those
+    /// conditions — e.g. on a `Pending` or `Delivered` milestone that has no
+    /// open dispute — returns `InvalidStatus`.
     ///
-    /// Like `admin_override_release`, this operates on any non-terminal status
-    /// and returns `InvalidStatus` for already-settled milestones.
+    /// The milestone is moved to `Refunded` and a full token transfer is
+    /// executed back to the client.
     ///
     /// # Parameters
     /// * `admin`           – Must match `DataKey::Admin`.
@@ -8326,7 +8349,9 @@ impl MilestoneEscrow {
     /// * `Paused`          – Contract is paused.
     /// * `NotFunded`       – Escrow has not been funded.
     /// * `InvalidMilestone`– `milestone_index` is out of range.
-    /// * `InvalidStatus`   – Milestone is already `Released` or `Refunded`.
+    /// * `InvalidStatus`   – Milestone is already `Released` or `Refunded`, or
+    ///                       it is not in `Disputed` status and no cancel lock
+    ///                       is active.
     /// * `InvalidAmount`   – Remaining balance is ≤ 0, or the subtraction
     ///                       `amount − released_amount` overflows `i128`
     ///                       (e.g. when `released_amount > amount`).  All
@@ -8354,6 +8379,21 @@ impl MilestoneEscrow {
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
         {
+            return Err(Error::InvalidStatus);
+        }
+
+        // Gate: only intervene when the normal settlement path is genuinely
+        // blocked.  The milestone must be Disputed (arbiter is unreachable or
+        // the dispute timed out without resolution), or the two-party cancel
+        // lock must be active.  Overriding a Pending, Delivered, or
+        // PartiallyReleased milestone that has no open dispute bypasses the
+        // arbiter entirely and makes the admin a unilateral custodian.
+        let cancel_locked = env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::CancelLock)
+            .unwrap_or(false);
+        if milestone.status != MilestoneStatus::Disputed && !cancel_locked {
             return Err(Error::InvalidStatus);
         }
 

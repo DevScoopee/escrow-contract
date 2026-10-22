@@ -131,8 +131,12 @@ fn admin_override_refund_refunds_client() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, _, _, admin_addr, token_id, _, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
 
     let before = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
     client.admin_override_refund(&admin_addr, &0u32);
@@ -140,6 +144,97 @@ fn admin_override_refund_refunds_client() {
     let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
     assert_eq!(after.status, MilestoneStatus::Refunded);
     assert_eq!(after.released_amount, 1_000);
+    assert_eq!(after.client_balance, before.client_balance + 1_000);
+    assert_eq!(after.contract_balance, before.contract_balance - 1_000);
+}
+
+// ── precondition gate: must be Disputed or CancelLock active ─────────────────
+
+#[test]
+fn pending_milestone_without_dispute_or_cancel_returns_invalid_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, _, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Milestone is Pending; no dispute raised, no cancel lock.
+    let before = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_eq!(before.status, MilestoneStatus::Pending);
+
+    let result = client.try_admin_override_refund(&admin_addr, &0u32);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(refund_event_count(&env), 0);
+
+    let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_ledger_unchanged(&before, &after);
+}
+
+#[test]
+fn delivered_milestone_without_dispute_or_cancel_returns_invalid_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+
+    let before = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_eq!(before.status, MilestoneStatus::Delivered);
+
+    let result = client.try_admin_override_refund(&admin_addr, &0u32);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(refund_event_count(&env), 0);
+
+    let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_ledger_unchanged(&before, &after);
+}
+
+#[test]
+fn disputed_milestone_allows_admin_override_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32);
+
+    let before = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_eq!(before.status, MilestoneStatus::Disputed);
+
+    client.admin_override_refund(&admin_addr, &0u32);
+    assert_eq!(refund_event_count(&env), 1);
+
+    let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_eq!(after.status, MilestoneStatus::Refunded);
+    assert_eq!(after.client_balance, before.client_balance + 1_000);
+    assert_eq!(after.contract_balance, before.contract_balance - 1_000);
+}
+
+#[test]
+fn cancel_locked_milestone_allows_admin_override_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Fire the two-party cancel lock.
+    client.cancel_escrow(&client_addr);
+    client.cancel_escrow(&freelancer_addr);
+
+    let before = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    // Milestone stays Pending — CancelLock is the trigger.
+    assert_eq!(before.status, MilestoneStatus::Pending);
+
+    client.admin_override_refund(&admin_addr, &0u32);
+    assert_eq!(refund_event_count(&env), 1);
+
+    let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
+    assert_eq!(after.status, MilestoneStatus::Refunded);
     assert_eq!(after.client_balance, before.client_balance + 1_000);
     assert_eq!(after.contract_balance, before.contract_balance - 1_000);
 }
