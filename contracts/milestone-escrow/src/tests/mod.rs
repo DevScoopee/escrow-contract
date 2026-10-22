@@ -38,6 +38,7 @@ mod get_platform_fee_allocation_not_initialized_tests;
 mod get_platform_fee_allocation_tests;
 mod get_whitelisted_tokens_footprint_tests;
 mod get_yield_info_no_mutation_tests;
+mod golden_snapshot_tests;
 mod interest_yield_admin_after_funding_tests;
 mod interest_yield_consent_tests;
 mod interest_yield_split_refund_guards_tests;

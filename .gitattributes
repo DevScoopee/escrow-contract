@@ -2,3 +2,7 @@
 # the reproducible-build container.
 *.sh text eol=lf
 build/*.Dockerfile text eol=lf
+
+# Golden snapshots are rewritten by the tests and diffed in CI; keep them
+# byte-identical on every platform.
+contracts/milestone-escrow/golden_snapshots/*.json text eol=lf

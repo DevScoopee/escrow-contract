@@ -54,6 +54,15 @@ jobs:
       - name: Run tests
         run: cargo test --manifest-path contracts/milestone-escrow/Cargo.toml
 
+      - name: Golden snapshots unchanged
+        # golden_snapshot_tests rewrites contracts/milestone-escrow/golden_snapshots/
+        # on every run. A diff means a flow now stores or emits something
+        # different: if that is intended, rerun the tests locally and commit
+        # the updated files with the change.
+        run: |
+          git add -N contracts/milestone-escrow/golden_snapshots
+          git diff --exit-code --stat -- contracts/milestone-escrow/golden_snapshots
+
       - name: Build WASM
         run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
 
