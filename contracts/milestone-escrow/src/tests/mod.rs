@@ -5,6 +5,7 @@ use soroban_sdk::{
     testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,
 };
 
+mod auth_requirements_tests;
 mod admin_accrue_yield_footprint_tests;
 mod admin_accrue_yield_tests;
 mod admin_override_cancel_tests;
