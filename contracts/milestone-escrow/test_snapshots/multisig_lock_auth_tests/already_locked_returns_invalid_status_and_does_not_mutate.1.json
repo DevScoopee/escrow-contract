@@ -243,6 +243,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "funded"
+                    },
+                    "val": {
+                      "bool": false
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "released_amount"
                     },
                     "val": {
@@ -391,6 +399,22 @@
                       },
                       "val": {
                         "bool": false
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "FundingMode"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "Upfront"
+                          }
+                        ]
                       }
                     },
                     {
