@@ -16,8 +16,9 @@
 //! the ledger untouched.
 
 use super::*;
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error};
-use soroban_sdk::{vec, Address, Env};
+use soroban_sdk::{Address, Env};
 
 /// Key count and XDR byte size of `contract_id`'s instance storage entry.
 fn instance_footprint(env: &Env, contract_id: &Address) -> (usize, usize) {
@@ -66,8 +67,11 @@ fn revoke_restores_instance_footprint_to_baseline() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, _, _, _, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1000_i128])
+        .funded()
+        .build();
+    let (client_addr, contract_id, client) = (fx.client, fx.contract_id, fx.escrow);
 
     let (baseline_keys, baseline_bytes) = instance_footprint(&env, &contract_id);
 
@@ -98,8 +102,11 @@ fn freelancer_revoke_restores_instance_footprint_to_baseline() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, freelancer_addr, _, _, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1000_i128])
+        .funded()
+        .build();
+    let (freelancer_addr, contract_id, client) = (fx.freelancer, fx.contract_id, fx.escrow);
 
     let baseline = instance_footprint(&env, &contract_id);
 
@@ -116,8 +123,12 @@ fn repeated_approve_revoke_cycles_do_not_grow_footprint() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, contract_id, client) =
-        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1000_i128])
+        .funded()
+        .build();
+    let (client_addr, freelancer_addr, contract_id, client) =
+        (fx.client, fx.freelancer, fx.contract_id, fx.escrow);
 
     let baseline = instance_footprint(&env, &contract_id);
 
@@ -137,7 +148,11 @@ fn rejected_revoke_does_not_mutate_ledger() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, _, _, _, _, _, client) = setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1000_i128])
+        .funded()
+        .build();
+    let (client_addr, client) = (fx.client, fx.escrow);
 
     let before = env.to_ledger_snapshot();
     let res = client.try_revoke_cancel_approval(&client_addr);

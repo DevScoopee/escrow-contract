@@ -21,9 +21,9 @@
 //! `get_yield_info` (or the shared `load_job_meta` helper it calls) will change
 //! the snapshot and fail these tests.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{Error, MilestoneEscrow, MilestoneEscrowClient};
-use soroban_sdk::{vec, Env};
+use soroban_sdk::Env;
 
 /// Take a whole-ledger snapshot, call `get_yield_info`, assert it published no
 /// event and left the ledger byte-for-byte unchanged, then return the value it
@@ -51,7 +51,8 @@ fn read_only(env: &Env, escrow: &MilestoneEscrowClient<'_>) -> (u32, i128, bool)
 fn get_yield_info_returns_defaults_without_mutation() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let escrow = fx.escrow;
 
     let (rate_bps, total_accrued, is_paused) = read_only(&env, &escrow);
 
@@ -66,7 +67,8 @@ fn get_yield_info_returns_defaults_without_mutation() {
 fn get_yield_info_does_not_mutate_ledger_after_yield_rate_set() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_set_yield_rate(&admin, &500_u32);
 
     let (rate_bps, total_accrued, is_paused) = read_only(&env, &escrow);
@@ -82,7 +84,8 @@ fn get_yield_info_does_not_mutate_ledger_after_yield_rate_set() {
 fn get_yield_info_does_not_mutate_ledger_after_accrual() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_accrue_yield(&admin, &0_u32, &250_i128);
 
     let (rate_bps, total_accrued, is_paused) = read_only(&env, &escrow);
@@ -98,7 +101,8 @@ fn get_yield_info_does_not_mutate_ledger_after_accrual() {
 fn get_yield_info_does_not_mutate_ledger_when_paused() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_pause_escrow(&admin);
 
     let (rate_bps, total_accrued, is_paused) = read_only(&env, &escrow);
@@ -115,7 +119,8 @@ fn get_yield_info_does_not_mutate_ledger_when_paused() {
 fn get_yield_info_reports_full_state_without_mutation() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_set_yield_rate(&admin, &750_u32);
     escrow.admin_accrue_yield(&admin, &0_u32, &325_i128);
     escrow.admin_pause_escrow(&admin);
@@ -133,7 +138,8 @@ fn get_yield_info_reports_full_state_without_mutation() {
 fn get_yield_info_does_not_mutate_ledger_across_repeated_calls() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_set_yield_rate(&admin, &1_200_u32);
 
     let before = env.to_ledger_snapshot();
@@ -157,7 +163,8 @@ fn get_yield_info_does_not_extend_ttl() {
 
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (admin, escrow) = (fx.admin, fx.escrow);
     escrow.admin_set_yield_rate(&admin, &300_u32);
     env.ledger().with_mut(|li| li.sequence_number += 10);
 

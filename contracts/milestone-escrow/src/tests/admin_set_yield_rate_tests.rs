@@ -15,41 +15,16 @@
 //! 7. Rate == 10000 (max / 100 %)    → `Ok(())`; `YieldRateBps` written as 10000.
 //! 8. Repeated calls update the rate correctly.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::{Escrow, EscrowFixture};
 use crate::{DataKey, Error, MilestoneEscrow, MilestoneEscrowClient, YieldConfig};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Set up a fully initialised (and funded) escrow and return the key addresses
-/// plus a client handle.
-///
-/// Return tuple: (client_addr, freelancer_addr, arbiter_addr, admin_addr,
-///                token_id, contract_id, escrow_client)
-fn setup(
-    env: &Env,
-) -> (
-    Address,
-    Address,
-    Address,
-    Address,
-    Address,
-    Address,
-    MilestoneEscrowClient<'_>,
-) {
+/// Set up a fully initialised (and funded) escrow with all auths mocked.
+fn setup(env: &Env) -> Escrow<'_> {
     env.mock_all_auths();
-    let amounts = vec![env, 1_000_i128];
-    let (client_addr, freelancer_addr, arbiter_addr, admin_addr, token_id, contract_id, escrow) =
-        setup_funded_escrow(env, amounts);
-    (
-        client_addr,
-        freelancer_addr,
-        arbiter_addr,
-        admin_addr,
-        token_id,
-        contract_id,
-        escrow,
-    )
+    EscrowFixture::new(env).funded().build()
 }
 
 /// Read the persisted yield rate from inside the contract.
@@ -74,7 +49,11 @@ fn read_yield_rate(env: &Env, contract_id: &Address) -> Option<u32> {
 #[test]
 fn unauthorized_caller_returns_unauthorized_and_does_not_mutate_storage() {
     let env = Env::default();
-    let (_, _, _, _, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     let attacker = Address::generate(&env);
     let rate_before = read_yield_rate(&env, &contract_id);
@@ -91,7 +70,11 @@ fn unauthorized_caller_returns_unauthorized_and_does_not_mutate_storage() {
 #[test]
 fn unauthorized_caller_with_zero_rate_returns_unauthorized_and_does_not_mutate_storage() {
     let env = Env::default();
-    let (_, _, _, _, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     let attacker = Address::generate(&env);
 
@@ -109,7 +92,14 @@ fn unauthorized_caller_with_zero_rate_returns_unauthorized_and_does_not_mutate_s
 #[test]
 fn paused_contract_returns_paused_and_does_not_mutate_storage() {
     let env = Env::default();
-    let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        client: client_addr,
+        freelancer: freelancer_addr,
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     // Pause the contract via the emergency-pause endpoint.
     escrow.emergency_pause(&client_addr, &freelancer_addr);
@@ -127,7 +117,14 @@ fn paused_contract_returns_paused_and_does_not_mutate_storage() {
 #[test]
 fn after_unpause_admin_can_set_yield_rate() {
     let env = Env::default();
-    let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        client: client_addr,
+        freelancer: freelancer_addr,
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.emergency_pause(&client_addr, &freelancer_addr);
 
@@ -148,7 +145,13 @@ fn after_unpause_admin_can_set_yield_rate() {
 #[test]
 fn paused_contract_unauthorized_caller_returns_paused_not_unauthorized() {
     let env = Env::default();
-    let (client_addr, freelancer_addr, _, _admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        client: client_addr,
+        freelancer: freelancer_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.emergency_pause(&client_addr, &freelancer_addr);
 
@@ -188,7 +191,12 @@ fn uninitialized_contract_returns_not_initialized_and_does_not_mutate_storage() 
 #[test]
 fn rate_above_bps_scale_returns_invalid_ratio_and_does_not_mutate_storage() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     let rate_before = read_yield_rate(&env, &contract_id);
 
@@ -202,7 +210,12 @@ fn rate_above_bps_scale_returns_invalid_ratio_and_does_not_mutate_storage() {
 #[test]
 fn rate_u32_max_returns_invalid_ratio_and_does_not_mutate_storage() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     let result = escrow.try_admin_set_yield_rate(&admin_addr, &u32::MAX);
 
@@ -217,7 +230,12 @@ fn rate_u32_max_returns_invalid_ratio_and_does_not_mutate_storage() {
 #[test]
 fn admin_can_set_valid_rate() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &500u32);
 
@@ -228,7 +246,12 @@ fn admin_can_set_valid_rate() {
 #[test]
 fn admin_can_set_zero_rate_to_disable_accrual() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &0u32);
 
@@ -239,7 +262,12 @@ fn admin_can_set_zero_rate_to_disable_accrual() {
 #[test]
 fn admin_can_set_max_rate_10000() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &10_000u32);
 
@@ -250,7 +278,12 @@ fn admin_can_set_max_rate_10000() {
 #[test]
 fn repeated_calls_update_rate_correctly() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &100u32);
     assert_eq!(read_yield_rate(&env, &contract_id), Some(100u32));
@@ -266,7 +299,12 @@ fn repeated_calls_update_rate_correctly() {
 #[test]
 fn admin_can_set_minimum_nonzero_rate_1_bps() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &1u32);
 
@@ -277,7 +315,12 @@ fn admin_can_set_minimum_nonzero_rate_1_bps() {
 #[test]
 fn admin_can_set_rate_just_below_cap_9999() {
     let env = Env::default();
-    let (_, _, _, admin_addr, _, contract_id, escrow) = setup(&env);
+    let Escrow {
+        admin: admin_addr,
+        contract_id,
+        escrow,
+        ..
+    } = setup(&env);
 
     escrow.admin_set_yield_rate(&admin_addr, &9_999u32);
 
