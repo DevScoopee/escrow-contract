@@ -37,7 +37,9 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
 | `request_revision` | Client | Return a delivered milestone to Pending (max 3) |
 | `approve_milestone` | Client | Release funds for a delivered milestone |
-| `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration |
+| `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration, committing a 32-byte `reason_hash` |
+| `submit_evidence` | Client or Freelancer | Anchor an evidence hash on an open dispute (max 10 per dispute) |
+| `get_dispute_info` | Anyone | Read the dispute reason hash, timestamps and evidence trail |
 | `escalate_dispute` | Client or Freelancer | After the timeout, restore a disputed milestone to its previous status |
 | `resolve_dispute` | Arbiter | Release to freelancer or refund to client |
 | `get_job` | Anyone | View current job state |

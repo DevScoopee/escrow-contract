@@ -50,7 +50,7 @@ fn disputed_escrow(env: &Env, arbiter_fee_bps: u32) -> Fixture<'_> {
     escrow.accept_arbiter(&arbiter);
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer, &0u32);
-    escrow.raise_dispute(&client_addr, &0u32);
+    escrow.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(env));
 
     Fixture {
         client_addr,

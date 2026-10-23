@@ -156,8 +156,18 @@ topic.
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
 | `raise_dispute` | client or freelancer | `ensure_not_paused`; funded; no dispute lock held; accepted by both | `Pending`, `Delivered`, `PartiallyReleased` | `Disputed` | none | `dispute` |
+| `submit_evidence` | client or freelancer | `ensure_not_paused`; funded; milestone `Disputed`; fewer than `MAX_DISPUTE_EVIDENCE_ENTRIES` hashes recorded | `Disputed` | `Disputed` | none | `evidence` |
 | `resolve_dispute` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Released` (release) or `Refunded` (refund) | → freelancer or → client, remaining capped at available balance | `resolve` |
 | `apply_dispute_arbitration_split` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Refunded`, `Split` or `Released` depending on the shares | → client and → freelancer by `client_refund_bps`, capped at available balance | `resolve`, `arbsplit` |
+
+`raise_dispute` takes a 32-byte `reason_hash` and persists a `DisputeInfo`
+record holding the ledger timestamp (`disputed_at`), the status to restore on
+escalation, the `reason_hash`, and an evidence list that starts empty (#712).
+Either party can append up to `MAX_DISPUTE_EVIDENCE_ENTRIES` (10) hashes with
+`submit_evidence` while the milestone is `Disputed`; each submission emits
+`evidence` and is readable through `get_dispute_info`. Resolving, escalating or
+admin-overriding a dispute deletes the record, so the evidence trail never
+outlives the dispute it belongs to.
 
 ### Cancellation
 
@@ -262,7 +272,8 @@ change no milestone or escrow state.
    - While emergency paused (`Ep`) or cancel locked, every endpoint guarded by
      `ensure_not_paused` is rejected: `fund`, `mark_delivered`,
      `approve_partial`, `approve_milestone`, `claim_auto_release`,
-     `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` and
+     `raise_dispute`, `submit_evidence`, `resolve_dispute`,
+     `apply_dispute_arbitration_split` and
      `upgrade`. The admin override endpoints do not check `Ep`, so only the
      admin can move funds.
    - While admin paused (`Paused`), `admin_override_refund` and
@@ -277,4 +288,5 @@ These neither change state nor publish events: `get_job`, `get_reputation`,
 `time_until_auto_release`, `dispute_arbitration_split`, `is_emergency_paused`,
 `get_platform_fee_allocation`, `is_multisig_approved`,
 `get_pending_admin_transfer`, `is_escrow_interest_yield_locked`,
-`get_escrow_interest_yield`, `get_yield_info`, `is_multisig_locked`.
+`get_escrow_interest_yield`, `get_yield_info`, `is_multisig_locked`,
+`get_dispute_info`.

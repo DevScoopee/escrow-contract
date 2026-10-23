@@ -182,9 +182,18 @@ pub enum Error {
     /// `add_milestone` was called on a job that already carries
     /// `MAX_MILESTONES` milestones.
     TooManyMilestones = 45,
+    /// `submit_evidence` was called after `MAX_DISPUTE_EVIDENCE_ENTRIES`
+    /// hashes had already been recorded for the milestone's current dispute.
+    EvidenceLimitReached = 46,
 }
 
 const MAX_REVISIONS: u32 = 3;
+
+/// Maximum number of evidence hashes a single dispute may accumulate through
+/// `submit_evidence`.  The cap bounds the persistent `DisputeInfo` value so a
+/// party cannot grow it without limit (and therefore cannot inflate the
+/// ledger-rent footprint of the dispute record) by submitting repeatedly.
+pub const MAX_DISPUTE_EVIDENCE_ENTRIES: u32 = 10;
 
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
 const MAX_CLIENT_FEE_BPS: u32 = 5000;
@@ -237,11 +246,37 @@ pub struct Milestone {
     pub spec_hash: BytesN<32>,
 }
 
+/// Evidence attached to a dispute by one of the parties (#712).
+///
+/// `evidence_hash` is a hash of an off-chain statement or evidence bundle —
+/// the contract never sees the underlying document, only its commitment.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct DisputeInfo {
-    disputed_at: u64,
-    previous_status: MilestoneStatus,
+pub struct EvidenceRecord {
+    /// The escrow party (client or freelancer) that submitted the hash.
+    pub submitter: Address,
+    /// Commitment to the off-chain evidence bundle.
+    pub evidence_hash: BytesN<32>,
+    /// Ledger timestamp at which the submission was recorded.
+    pub submitted_at: u64,
+}
+
+/// Persistent record of an open dispute (#712).
+///
+/// Written by `raise_dispute`, read by `escalate_dispute` and exposed through
+/// `get_dispute_info`. Kept as one struct-valued key so raising a dispute costs
+/// a single persistent write.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeInfo {
+    /// Ledger timestamp at which `raise_dispute` recorded the dispute.
+    pub disputed_at: u64,
+    /// Milestone status to restore if the dispute is escalated after timeout.
+    pub previous_status: MilestoneStatus,
+    /// Commitment to the reason/evidence bundle supplied by the raiser.
+    pub reason_hash: BytesN<32>,
+    /// Evidence hashes added by either party while the milestone is Disputed.
+    pub evidence: Vec<EvidenceRecord>,
 }
 
 #[contracttype]
@@ -683,9 +718,22 @@ pub struct DisputeRaisedEvent {
     pub caller: Address,
     /// The amount of the milestone being disputed, in stroops.
     pub milestone_amount: i128,
+    /// Commitment to the reason/evidence bundle the caller supplied (#712).
+    pub reason_hash: BytesN<32>,
     pub disputed_at: u64,
     /// The resulting milestone status after raising the dispute (always `Disputed`).
     pub new_status: MilestoneStatus,
+}
+
+/// Emitted by `submit_evidence` when a party anchors an evidence hash to an
+/// open dispute (#712).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceSubmittedEvent {
+    pub milestone_index: u32,
+    pub caller: Address,
+    pub evidence_hash: BytesN<32>,
+    pub submitted_at: u64,
 }
 
 /// Emitted by `resolve_dispute` and `apply_dispute_arbitration_split`.
@@ -4988,6 +5036,11 @@ impl MilestoneEscrow {
     /// * `caller`          – Must be either the job's client or freelancer.
     ///                       Must authorize the call.
     /// * `milestone_index` – Index of the milestone being disputed.
+    /// * `reason_hash`     – Commitment (e.g. SHA-256) to the off-chain
+    ///                       statement or evidence bundle explaining the
+    ///                       dispute. Stored with `disputed_at` and echoed in
+    ///                       `DisputeRaisedEvent` so arbiters have an on-chain
+    ///                       anchor for what the raiser claimed (#712).
     ///
     /// # Errors
     /// * `Paused`           – The contract is emergency-paused.
@@ -5001,7 +5054,12 @@ impl MilestoneEscrow {
     ///                        `PartiallyReleased`.
     /// * `NotAccepted`      – The freelancer or arbiter has not accepted the
     ///                        job.
-    pub fn raise_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
+    pub fn raise_dispute(
+        env: Env,
+        caller: Address,
+        milestone_index: u32,
+        reason_hash: BytesN<32>,
+    ) -> Result<(), Error> {
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5045,7 +5103,7 @@ impl MilestoneEscrow {
             .temporary()
             .set(&DataKey::DisputeLock(milestone_index), &true);
 
-        let result = Self::raise_dispute_inner(&env, caller, milestone_index, meta);
+        let result = Self::raise_dispute_inner(&env, caller, milestone_index, reason_hash, meta);
 
         // Always release the lock regardless of success or failure.
         Self::release_dispute_lock(&env, milestone_index);
@@ -5065,6 +5123,7 @@ impl MilestoneEscrow {
         env: &Env,
         caller: Address,
         milestone_index: u32,
+        reason_hash: BytesN<32>,
         meta: JobMeta,
     ) -> Result<(), Error> {
         Self::require_escrow_has_funding(env, &meta)?;
@@ -5100,6 +5159,8 @@ impl MilestoneEscrow {
             &DisputeInfo {
                 disputed_at,
                 previous_status: milestone.status.clone(),
+                reason_hash: reason_hash.clone(),
+                evidence: Vec::new(env),
             },
         );
         milestone.status = MilestoneStatus::Disputed;
@@ -5116,12 +5177,124 @@ impl MilestoneEscrow {
                 milestone_index,
                 caller,
                 milestone_amount: milestone.amount,
+                reason_hash,
                 disputed_at,
                 new_status: MilestoneStatus::Disputed,
             },
         );
 
         Ok(())
+    }
+
+    /// Attach an evidence hash to an already-open dispute (#712).
+    ///
+    /// Either the client or the freelancer may anchor evidence while the
+    /// milestone is `Disputed`. The hash is stored in the milestone's
+    /// `DisputeInfo` record (bounded by `MAX_DISPUTE_EVIDENCE_ENTRIES`) and
+    /// echoed in an `EvidenceSubmittedEvent`, so arbiters can reconstruct what
+    /// each party submitted without trusting off-chain metadata.
+    ///
+    /// # Parameters
+    /// * `caller`          – Must be either the job's client or freelancer.
+    ///                       Must authorize the call.
+    /// * `milestone_index` – Index of the disputed milestone.
+    /// * `evidence_hash`   – Commitment to the off-chain evidence bundle.
+    ///
+    /// # Errors
+    /// * `Paused`               – The contract is emergency-paused.
+    /// * `InvalidAddress`       – `caller` is a zero address.
+    /// * `NotInitialized`       – Contract has not been initialized.
+    /// * `Unauthorized`         – `caller` is neither the client nor the
+    ///                            freelancer.
+    /// * `NotFunded`            – The escrow has not been funded yet.
+    /// * `InvalidMilestone`     – `milestone_index` is out of range.
+    /// * `InvalidStatus`        – The milestone is not `Disputed`.
+    /// * `EvidenceLimitReached` – The dispute already holds
+    ///                            `MAX_DISPUTE_EVIDENCE_ENTRIES` hashes.
+    pub fn submit_evidence(
+        env: Env,
+        caller: Address,
+        milestone_index: u32,
+        evidence_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+
+        // Validate the caller before any storage read/write so an unauthorized
+        // address neither pays for the dispute lookup nor mutates state.
+        let zero_account = Address::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        );
+        let zero_contract = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
+        if caller == zero_account || caller == zero_contract {
+            return Err(Error::InvalidAddress);
+        }
+        let meta = Self::require_dispute_party(&env, &caller)?;
+        if !meta.funded {
+            return Err(Error::NotFunded);
+        }
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.status != MilestoneStatus::Disputed {
+            return Err(Error::InvalidStatus);
+        }
+
+        let key = DataKey::DisputeInfo(milestone_index);
+        let mut dispute_info: DisputeInfo = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::InvalidStatus)?;
+        if dispute_info.evidence.len() >= MAX_DISPUTE_EVIDENCE_ENTRIES {
+            return Err(Error::EvidenceLimitReached);
+        }
+
+        let submitted_at = env.ledger().timestamp();
+        dispute_info.evidence.push_back(EvidenceRecord {
+            submitter: caller.clone(),
+            evidence_hash: evidence_hash.clone(),
+            submitted_at,
+        });
+        env.storage().persistent().set(&key, &dispute_info);
+
+        env.events().publish(
+            (symbol_short!("evidence"),),
+            EvidenceSubmittedEvent {
+                milestone_index,
+                caller,
+                evidence_hash,
+                submitted_at,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Read the on-chain record for an open dispute (#712).
+    ///
+    /// Returns the raising party's `reason_hash`, the ledger timestamp of the
+    /// raise (`disputed_at`), the status to restore on escalation, and every
+    /// evidence hash submitted so far. Callers use this to anchor arbitration
+    /// context without relying on off-chain metadata.
+    ///
+    /// # Errors
+    /// * [`Error::InvalidStatus`] – No open dispute exists for the milestone.
+    pub fn get_dispute_info(env: Env, milestone_index: u32) -> Result<DisputeInfo, Error> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DisputeInfo(milestone_index))
+            .ok_or(Error::InvalidStatus)
     }
 
     /// Escalate an unresolved dispute after its configured timeout by

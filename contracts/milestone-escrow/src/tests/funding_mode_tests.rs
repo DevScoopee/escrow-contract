@@ -125,7 +125,7 @@ fn unfunded_milestone_cannot_be_settled() {
         Err(Ok(Error::NotFunded))
     );
     assert_eq!(
-        escrow.try_raise_dispute(&client_addr, &1u32),
+        escrow.try_raise_dispute(&client_addr, &1u32, &dispute_reason_hash(&env)),
         Err(Ok(Error::NotFunded))
     );
     assert_eq!(
@@ -189,7 +189,7 @@ fn conservation_invariant() {
     escrow.fund_milestone(&client_addr, &0u32);
     escrow.mark_delivered(&freelancer_addr, &0u32);
     escrow.approve_partial(&client_addr, &0u32, &40_i128);
-    escrow.raise_dispute(&client_addr, &0u32);
+    escrow.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
     escrow.resolve_dispute(&arbiter_addr, &0u32, &false);
     let token_client = token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&escrow.address), 0);
