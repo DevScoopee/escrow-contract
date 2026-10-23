@@ -265,6 +265,18 @@ cargo test -p milestone-escrow
 - `lock_escrow_interest_yield` now rejects unauthorized callers with `Unauthorized` and an illegal source state with `InvalidStatus` **before** it reads or writes the ledger entry (issue #464); authorization runs first via `require_admin_from_instance`, so a non-admin cannot probe whether an escrow is locked, and an already-locked configuration is refused rather than silently re-locked
 - Contract tests and snapshots are provided under `contracts/milestone-escrow/test_snapshots`
 
+## Escrow factory
+
+`contracts/escrow-factory` deploys one escrow per job (issue #666). It is
+deployed with `--admin <platform-admin> --wasm_hash <escrow-wasm-hash>`
+constructor arguments. The admin allows tokens with `allow_token` and can
+point the factory at a new escrow build with `set_wasm_hash`.
+
+`create_escrow(client, freelancer, arbiter, token, auto_release_seconds,
+milestone_amounts, milestone_spec_hashes, settings, salt)` needs only the
+client's signature. It deploys the escrow with the platform admin as its
+admin and emits `created` with the new escrow's address.
+
 ## Deploy (Testnet)
 
 `scripts/deploy-testnet.sh` builds the reproducible wasm, uploads it, deploys

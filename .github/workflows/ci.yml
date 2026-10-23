@@ -58,6 +58,19 @@ jobs:
       - name: Build WASM
         run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
 
+      # The factory's tests deploy the escrow wasm built just above.
+      - name: Format check (factory)
+        run: cargo fmt --manifest-path contracts/escrow-factory/Cargo.toml --check
+
+      - name: Clippy (factory)
+        run: cargo clippy --manifest-path contracts/escrow-factory/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run factory tests
+        run: cargo test --manifest-path contracts/escrow-factory/Cargo.toml
+
+      - name: Build factory WASM
+        run: stellar contract build --manifest-path contracts/escrow-factory/Cargo.toml
+
   typescript-bindings:
     # Issue #744: clients hand-encode ScVals today (backend build-tx mapper,
     # frontend initialize call) and their decoding of get_job /

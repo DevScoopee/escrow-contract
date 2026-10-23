@@ -3219,6 +3219,7 @@ impl MilestoneEscrow {
         milestone_amounts: Vec<i128>,
         milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
+        admin.require_auth();
         Self::initialize_with_settings(
             env,
             admin,
@@ -3255,6 +3256,7 @@ impl MilestoneEscrow {
         milestone_amounts: Vec<i128>,
         milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
+        admin.require_auth();
         Self::initialize_with_settings(
             env,
             admin,
@@ -3285,8 +3287,11 @@ impl MilestoneEscrow {
         milestone_amounts: Vec<i128>,
         milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
-        admin.require_auth();
-
+        // No `admin.require_auth()` here: the constructor runs atomically with
+        // the deploy, so nobody can initialise the contract first, and the
+        // factory (#666) must be able to name the platform admin without the
+        // admin co-signing every job. The test-only initialisers below still
+        // require it.
         if env.storage().instance().has(&DataKey::Job) {
             return Err(Error::AlreadyInitialized);
         }
@@ -3460,6 +3465,7 @@ impl MilestoneEscrow {
         milestone_spec_hashes: Vec<BytesN<32>>,
         funding_mode: FundingMode,
     ) -> Result<(), Error> {
+        admin.require_auth();
         Self::initialize_with_settings(
             env,
             admin,
@@ -3492,6 +3498,7 @@ impl MilestoneEscrow {
         milestone_spec_hashes: Vec<BytesN<32>>,
         arbiter_fee_bps: u32,
     ) -> Result<(), Error> {
+        admin.require_auth();
         Self::initialize_with_settings(
             env,
             admin,
