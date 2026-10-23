@@ -17,6 +17,7 @@ mod admin_resume_escrow_footprint_tests;
 mod admin_set_yield_rate_tests;
 mod admin_tax_withholding_guards_tests;
 mod admin_transfer_target_tests;
+mod arbiter_fee_tests;
 mod arbitration_split_event_tests;
 mod cancel_admin_transfer_tests;
 mod cancel_escrow_split_refund_guards_tests;
@@ -1498,6 +1499,7 @@ fn test_resolve_dispute_emits_structured_event() {
                         token: token_contract_id.clone(),
                         amount: 1_000,
                         paid_amount: 1_000,
+                        arbiter_fee_amount: 0,
                         released_to_freelancer: true,
                         status: MilestoneStatus::Released,
                     }

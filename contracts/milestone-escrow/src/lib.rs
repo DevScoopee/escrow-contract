@@ -185,6 +185,9 @@ const ACCEPTANCE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 const BPS_SCALE: u32 = 10_000;
 
+/// Maximum arbiter fee in basis points (1,000 = 10 %), issue #738.
+const MAX_ARBITER_FEE_BPS: u32 = 1_000;
+
 /// Seconds in a standard Gregorian year (365 days). Used by the simple-interest
 /// estimator in `escrow_interest_yield`.
 const SECONDS_PER_YEAR: i128 = 31_536_000;
@@ -514,6 +517,11 @@ pub enum DataKey {
     /// Every tax settlement path pays this address; records written before
     /// the capture existed fall back to `DataKey::TaxRecipient`.
     TaxWithholdingRecipient(u32),
+    /// Instance: the arbiter's fee in basis points of a disputed milestone's
+    /// remaining balance, fixed at construction (issue #738).  Absent means
+    /// no fee, which is how every escrow created through `initialize` (and
+    /// every escrow deployed before the fee existed) behaves.
+    ArbiterFeeBps,
 }
 
 #[contracttype]
@@ -659,6 +667,9 @@ pub struct DisputeResolvedEvent {
     /// client. May be less than `amount` if the contract balance was
     /// insufficient to cover the full owed amount.
     pub paid_amount: i128,
+    /// Arbiter fee taken from the disputed balance before the parties were
+    /// paid (issue #738). Zero when the escrow has no arbiter fee.
+    pub arbiter_fee_amount: i128,
     pub released_to_freelancer: bool,
     pub status: MilestoneStatus,
 }
@@ -687,6 +698,9 @@ pub struct ArbitrationSplitAppliedEvent {
     pub client_refund: i128,
     /// Amount actually paid to the freelancer.
     pub freelancer_payout: i128,
+    /// Arbiter fee taken from the disputed balance before the split (issue
+    /// #738). Zero when the escrow has no arbiter fee.
+    pub arbiter_fee_amount: i128,
     /// Basis points of the disputed balance awarded to the client. Matches the
     /// value persisted under `ArbitrationSplitBps(milestone_index)`.
     pub client_refund_bps: u32,
@@ -3171,6 +3185,77 @@ impl MilestoneEscrow {
         Ok(())
     }
 
+    /// Same as `initialize`, with an arbiter fee (issue #738).
+    ///
+    /// `arbiter_fee_bps` is the share of a disputed milestone's remaining
+    /// balance paid to the arbiter when it resolves the dispute through
+    /// `resolve_dispute` or `apply_dispute_arbitration_split`; the parties
+    /// split what is left.  It is fixed here, at construction, and cannot be
+    /// changed later.  Milestones that never go to dispute pay no fee.
+    ///
+    /// # Errors
+    /// * [`Error::InvalidRatio`] – `arbiter_fee_bps` exceeds
+    ///   `MAX_ARBITER_FEE_BPS` (1,000 bps = 10 %).  Checked before anything
+    ///   is written.
+    /// * Every error `initialize` returns.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_with_arbiter_fee(
+        env: Env,
+        admin: Address,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        token: Address,
+        auto_release_seconds: u64,
+        milestone_amounts: Vec<i128>,
+        milestone_spec_hashes: Vec<BytesN<32>>,
+        arbiter_fee_bps: u32,
+    ) -> Result<(), Error> {
+        if arbiter_fee_bps > MAX_ARBITER_FEE_BPS {
+            return Err(Error::InvalidRatio);
+        }
+        Self::initialize(
+            env.clone(),
+            admin,
+            client,
+            freelancer,
+            arbiter,
+            token,
+            auto_release_seconds,
+            milestone_amounts,
+            milestone_spec_hashes,
+        )?;
+        if arbiter_fee_bps > 0 {
+            env.storage()
+                .instance()
+                .set(&DataKey::ArbiterFeeBps, &arbiter_fee_bps);
+        }
+        Ok(())
+    }
+
+    /// The arbiter fee in basis points (issue #738); 0 when none was set.
+    pub fn get_arbiter_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ArbiterFeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Arbiter fee owed on a disputed `remaining` balance:
+    /// `remaining * arbiter_fee_bps / 10_000`, rounded down and capped to
+    /// `available` (issue #738).
+    fn arbiter_fee_for(env: &Env, remaining: i128, available: i128) -> Result<i128, Error> {
+        let fee_bps = Self::get_arbiter_fee_bps(env.clone());
+        if fee_bps == 0 {
+            return Ok(0);
+        }
+        let fee = remaining
+            .checked_mul(fee_bps as i128)
+            .ok_or(Error::ArithmeticOverflow)?
+            / BPS_SCALE as i128;
+        Ok(fee.min(available))
+    }
+
     /// Transfer admin control of the contract to a new address.
     ///
     /// The new admin immediately gains access to all admin-only endpoints
@@ -4804,7 +4889,19 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let payout = remaining.min(contract_balance);
+        // Issue #738: the arbiter's fee comes out of the disputed balance
+        // first; the winning party receives the rest.
+        let arbiter_fee_amount = Self::arbiter_fee_for(&env, remaining, contract_balance)?;
+        let after_fee = contract_balance
+            .checked_sub(arbiter_fee_amount)
+            .ok_or(Error::InvalidAmount)?;
+        let payout = remaining
+            .checked_sub(arbiter_fee_amount)
+            .ok_or(Error::InvalidAmount)?
+            .min(after_fee);
+        if arbiter_fee_amount > 0 {
+            Self::pay_or_credit(&env, &token_client, &meta.arbiter, &arbiter_fee_amount)?;
+        }
         if release_to_freelancer {
             milestone.released_amount = milestone
                 .released_amount
@@ -4840,9 +4937,11 @@ impl MilestoneEscrow {
                 freelancer: meta.freelancer.clone(),
                 token: meta.token.clone(),
                 // `amount` is what was owed before capping to the available
-                // balance; `paid_amount` is what actually moved.
+                // balance; `paid_amount` is what actually moved to the
+                // winning party, excluding the arbiter fee.
                 amount: remaining,
                 paid_amount: payout,
+                arbiter_fee_amount,
                 released_to_freelancer: release_to_freelancer,
                 status: milestone.status.clone(),
             },
@@ -5025,12 +5124,24 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let allocation = Self::allocate_refund_by_bps(remaining, client_refund_bps)?;
-
         let token_client = token::Client::new(&env, &meta.token);
         let contract_balance = Self::available_balance(&env, &token_client);
         if contract_balance <= 0 {
             return Err(Error::InvalidAmount);
+        }
+
+        // Issue #738: the arbiter's fee comes out of the disputed balance
+        // first; the parties split what is left in the requested ratio.
+        let arbiter_fee_amount = Self::arbiter_fee_for(&env, remaining, contract_balance)?;
+        let contract_balance = contract_balance
+            .checked_sub(arbiter_fee_amount)
+            .ok_or(Error::InvalidAmount)?;
+        let split_amount = remaining
+            .checked_sub(arbiter_fee_amount)
+            .ok_or(Error::InvalidAmount)?;
+        let allocation = Self::allocate_refund_by_bps(split_amount, client_refund_bps)?;
+        if arbiter_fee_amount > 0 {
+            Self::pay_or_credit(&env, &token_client, &meta.arbiter, &arbiter_fee_amount)?;
         }
 
         // Cap transfers to available contract balance while preserving the
@@ -5095,6 +5206,7 @@ impl MilestoneEscrow {
                 token: meta.token.clone(),
                 amount: remaining,
                 paid_amount,
+                arbiter_fee_amount,
                 released_to_freelancer: freelancer_payout > 0,
                 status: milestone.status.clone(),
             },
@@ -5114,6 +5226,7 @@ impl MilestoneEscrow {
                 token: meta.token.clone(),
                 client_refund,
                 freelancer_payout,
+                arbiter_fee_amount,
                 client_refund_bps,
                 freelancer_payout_bps: allocation.freelancer_payout_bps,
                 released_amount: milestone.released_amount,
