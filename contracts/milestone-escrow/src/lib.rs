@@ -5724,20 +5724,17 @@ impl MilestoneEscrow {
 
         let token_client = token::Client::new(&env, &meta.token);
         let contract_balance = Self::available_balance(&env, &token_client);
-        if contract_balance <= 0 {
-            return Err(Error::InvalidAmount);
+        if contract_balance < remaining {
+            return Err(Error::InsufficientBalance);
         }
 
         // Issue #738: the arbiter's fee comes out of the disputed balance
-        // first; the winning party receives the rest.
+        // first; the winning party receives the rest. The balance check above
+        // (#689) guarantees the whole remaining amount is available.
         let arbiter_fee_amount = Self::arbiter_fee_for(&env, remaining, contract_balance)?;
-        let after_fee = contract_balance
-            .checked_sub(arbiter_fee_amount)
-            .ok_or(Error::InvalidAmount)?;
         let payout = remaining
             .checked_sub(arbiter_fee_amount)
-            .ok_or(Error::InvalidAmount)?
-            .min(after_fee);
+            .ok_or(Error::InvalidAmount)?;
         if arbiter_fee_amount > 0 {
             Self::pay_or_credit(&env, &token_client, &meta.arbiter, &arbiter_fee_amount)?;
         }
@@ -5950,16 +5947,15 @@ impl MilestoneEscrow {
 
         let token_client = token::Client::new(&env, &meta.token);
         let contract_balance = Self::available_balance(&env, &token_client);
-        if contract_balance <= 0 {
-            return Err(Error::InvalidAmount);
+        if contract_balance < remaining {
+            return Err(Error::InsufficientBalance);
         }
 
         // Issue #738: the arbiter's fee comes out of the disputed balance
-        // first; the parties split what is left in the requested ratio.
+        // first; the parties split what is left in the requested ratio. The
+        // balance check above (#689) guarantees the whole remaining amount is
+        // available, so neither leg is capped.
         let arbiter_fee_amount = Self::arbiter_fee_for(&env, remaining, contract_balance)?;
-        let contract_balance = contract_balance
-            .checked_sub(arbiter_fee_amount)
-            .ok_or(Error::InvalidAmount)?;
         let split_amount = remaining
             .checked_sub(arbiter_fee_amount)
             .ok_or(Error::InvalidAmount)?;
@@ -5968,13 +5964,8 @@ impl MilestoneEscrow {
             Self::pay_or_credit(&env, &token_client, &meta.arbiter, &arbiter_fee_amount)?;
         }
 
-        // Cap transfers to available contract balance while preserving the
-        // proportional split intent (client first, then freelancer remainder).
-        let client_refund = allocation.client_refund.min(contract_balance);
-        let freelancer_cap = contract_balance
-            .checked_sub(client_refund)
-            .ok_or(Error::InvalidAmount)?;
-        let freelancer_payout = allocation.freelancer_payout.min(freelancer_cap);
+        let client_refund = allocation.client_refund;
+        let freelancer_payout = allocation.freelancer_payout;
 
         if client_refund > 0 {
             Self::pay_or_credit(&env, &token_client, &meta.client, &client_refund)?;
@@ -9576,17 +9567,12 @@ impl MilestoneEscrow {
 
         let token_client = token::Client::new(&env, &meta.token);
         let contract_balance = Self::available_balance(&env, &token_client);
-        if contract_balance <= 0 {
-            return Err(Error::InvalidAmount);
+        if contract_balance < remaining {
+            return Err(Error::InsufficientBalance);
         }
 
-        // Cap transfers to available contract balance while preserving the
-        // proportional split intent (client first, then freelancer remainder).
-        let client_refund = split.second.min(contract_balance);
-        let freelancer_cap = contract_balance
-            .checked_sub(client_refund)
-            .ok_or(Error::InvalidAmount)?;
-        let freelancer_payout = split.first.min(freelancer_cap);
+        let client_refund = split.second;
+        let freelancer_payout = split.first;
 
         if client_refund > 0 {
             Self::pay_or_credit(&env, &token_client, &meta.client, &client_refund)?;

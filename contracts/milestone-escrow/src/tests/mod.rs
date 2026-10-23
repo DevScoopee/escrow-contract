@@ -684,7 +684,7 @@ fn test_apply_dispute_arbitration_split_rejects_i128_extremes() {
             .set(&DataKey::Milestone(0u32), &milestone);
     });
     let result = client.try_apply_dispute_arbitration_split(&arbiter_addr, &0u32, &10_000u32);
-    assert_eq!(result.unwrap_err().unwrap(), Error::InvalidAmount);
+    assert_eq!(result.unwrap_err().unwrap(), Error::InsufficientBalance);
 
     milestone.amount = i128::MIN;
     milestone.released_amount = 0;
@@ -1463,7 +1463,7 @@ fn test_resolve_dispute_reverts_when_contract_balance_is_empty() {
     token.transfer(&contract_id, &client_addr, &1_000_i128);
 
     let result = client.try_resolve_dispute(&arbiter_addr, &0u32, &true);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::InsufficientBalance)));
 }
 
 #[test]
@@ -1533,7 +1533,7 @@ fn test_resolve_dispute_emits_structured_event() {
 /// aren't misled when a shortfall in the contract's balance caps the
 /// payout below what was due.
 #[test]
-fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
+fn test_resolve_dispute_rejects_a_balance_shortfall() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1570,22 +1570,12 @@ fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
     let token = mock_token::MockTokenClient::new(&env, &token_contract_id);
     token.transfer(&contract_id, &client_addr, &700_i128);
 
-    client.resolve_dispute(&arbiter_addr, &0u32, &true);
-
-    let resolve_topic: Symbol = symbol_short!("resolve");
-    let resolve_topic_val: Val = resolve_topic.into_val(&env);
-    let mut matched = 0u32;
-    for event in crate::all_event_tuples(&env).iter() {
-        if let Some(topic) = event.1.get(0) {
-            if topic.get_payload() == resolve_topic_val.get_payload() {
-                matched += 1;
-                let decoded = DisputeResolvedEvent::from_val(&env, &event.2);
-                assert_eq!(decoded.amount, 1_000);
-                assert_eq!(decoded.paid_amount, 300);
-            }
-        }
-    }
-    assert_eq!(matched, 1);
+    // A shortfall is rejected rather than paid out partially (#689).
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter_addr, &0u32, &true),
+        Err(Ok(Error::InsufficientBalance))
+    );
+    assert_eq!(token.balance(&contract_id), 300);
 }
 
 #[test]
