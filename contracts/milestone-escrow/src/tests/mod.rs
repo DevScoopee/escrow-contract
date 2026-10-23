@@ -15720,6 +15720,102 @@ fn test_raise_dispute_by_freelancer_on_delivered_milestone_succeeds() {
     );
 }
 
+/// Regression guard — helper functions in impl block
+#[test]
+fn test_helper_functions_are_accessible() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, _, _, _, contract_id, _) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Test is_dispute_flag returns false when never written
+    let flag = env.as_contract(&contract_id, || MilestoneEscrow::is_dispute_flag(&env, 0));
+    assert!(!flag, "dispute flag should be false when never written");
+
+    // Write a dispute flag for milestone 0
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .temporary()
+            .set(&DataKey::DisputeFlag(0), &true);
+    });
+
+    let flag = env.as_contract(&contract_id, || MilestoneEscrow::is_dispute_flag(&env, 0));
+    assert!(flag, "dispute flag should be true when written");
+}
+
+#[test]
+fn test_helper_functions_returns_true_when_written() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, _, _, _, contract_id, _) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Write a released flag for milestone 0
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .temporary()
+            .set(&DataKey::MilestoneReleased(0), &true);
+    });
+
+    let flag = env.as_contract(&contract_id, || {
+        MilestoneEscrow::is_milestone_released_flag(&env, 0)
+    });
+    assert!(flag, "released flag should be true when written");
+}
+
+#[test]
+fn test_helper_functions_split_applied_flag() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, _, _, _, contract_id, _) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Split should not be applied initially
+    let split_applied = env.as_contract(&contract_id, || {
+        MilestoneEscrow::is_arbitration_split_applied(&env, 0)
+    });
+    assert!(!split_applied, "split should not be applied initially");
+
+    // Apply an arbitration split for milestone 0
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .temporary()
+            .set(&DataKey::ArbitrationSplitBps(0), &5000u32);
+    });
+
+    let split_applied = env.as_contract(&contract_id, || {
+        MilestoneEscrow::is_arbitration_split_applied(&env, 0)
+    });
+    assert!(split_applied, "split should be true when applied");
+}
+
+#[test]
+fn test_assert_not_paused_returns_ok_when_not_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, _, _, _, contract_id, _) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Contract should not be paused initially
+    let result = env.as_contract(&contract_id, || MilestoneEscrow::assert_not_paused(&env));
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn test_assert_not_paused_returns_paused_error_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, _, escrow_admin, _, contract_id, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Pause the contract via admin pause
+    client.admin_pause_escrow(&escrow_admin);
+
+    // assert_not_paused should return Paused error
+    let result = env.as_contract(&contract_id, || MilestoneEscrow::assert_not_paused(&env));
+    assert_eq!(result, Err(Error::Paused));
+}
 // ============================================================================
 // initialize — party-distinctness validation (issue #667)
 //
