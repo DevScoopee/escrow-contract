@@ -16,6 +16,7 @@ Thank you for your interest in contributing! This document outlines the process 
 3. Write tests for new functionality (if applicable)
 4. Verify all tests pass: `cargo test --all-targets`
 5. Ensure the code builds: `cargo build --release`
+6. If your change adds, removes or alters a state transition, its required signers, its token movements or its event, update [`contracts/milestone-escrow/SPEC.md`](contracts/milestone-escrow/SPEC.md) in the same PR
 
 ## Code Style
 

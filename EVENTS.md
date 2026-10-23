@@ -9,12 +9,20 @@ row here, and a row here must correspond to a topic in the source.
 | ---------- | -------------------------------- | ----------------- |
 | `init`     | `InitializedEvent`               | state change      |
 | `fund`     | `FundedEvent`                    | state change      |
+| `acceptjob`| `JobAcceptedEvent`               | state change      |
+| `acceptarb`| `JobAcceptedEvent`               | state change      |
+| `unaccref` | `UnacceptedWithdrawnEvent`       | state change      |
+| `withdraw` | `WithdrawnEvent`                 | state change      |
+| `msfund`   | `MilestoneFundedEvent`           | state change      |
 | `deliver`  | `DeliveredEvent`                 | state change      |
+| `msrev`    | `RevisionRequestedEvent`         | state change      |
 | `approve`  | `ApprovedEvent`                  | state change      |
 | `claim`    | `ClaimedEvent`                   | state change      |
 | `extend`   | `DeadlineExtendedEvent`          | state change      |
 | `dispute`  | `DisputeRaisedEvent`             | state change      |
+| `dispescal`| `DisputeEscalatedEvent`          | state change      |
 | `resolve`  | `DisputeResolvedEvent`           | state change      |
+| `sweep`    | `ExcessSweptEvent`               | state change      |
 | `cancel`   | `CancelEscrowInitiatedEvent`     | state change      |
 | `cxlappr`  | `CancelApprovalRecordedEvent`    | state change      |
 | `cancelrev`| `CancelApprovalRevokedEvent`     | state change      |
@@ -42,7 +50,6 @@ row here, and a row here must correspond to a topic in the source.
 | `arbsplit` | `ArbitrationSplitAppliedEvent`   | calculation       |
 | `msiginit` | `MultisigApprovalInitEvent`      | state change      |
 | `msigappr` | `MultiSigApprovedEvent`          | state change      |
-| `msigtrx`  | `MultiSigTransferAdminEvent`     | state change      |
 | `mslock`   | `MultisigLockedEvent`            | state change      |
 | `msadmrel` | `MultisigAdminOverrideReleaseEvent` | state change   |
 | `msadmref` | `MultisigAdminOverrideRefundEvent`  | state change   |

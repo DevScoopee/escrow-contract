@@ -3,8 +3,8 @@
 # scripts/e2e.sh — local end-to-end smoke test.
 #
 # Builds the milestone-escrow contract, deploys it to a throwaway local
-# Stellar network, and drives the funded -> delivered -> approved lifecycle
-# plus the dispute -> refund path, asserting the resulting on-chain state.
+# Stellar network, and drives the funded -> delivered -> disputed -> refunded
+# path, asserting the resulting on-chain state.
 #
 # Requirements:
 #   * stellar-cli (https://developers.stellar.org/docs/tools/developer-tools/cli)
@@ -14,7 +14,7 @@
 #   ./scripts/e2e.sh
 #
 # Environment overrides:
-#   NETWORK_NAME   local network name (default: e2e-local)
+#   NETWORK_NAME   local network name (default: milestone-e2e)
 #   KEEP_NETWORK=1 leave the local network running on exit (for debugging)
 
 set -euo pipefail
@@ -96,13 +96,21 @@ invoke admin initialize \
   --arbiter "${ARBITER}" \
   --token "${TOKEN_ID}" \
   --auto_release_seconds 604800 \
-  --milestone_amounts '["1000000"]'
+  --milestone_amounts '["1000000"]' \
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
+
+log "Minting test tokens to the client"
+stellar contract invoke \
+  --id "${TOKEN_ID}" \
+  --source admin \
+  --network "${NETWORK}" \
+  -- mint --to "${CLIENT_ADDR}" --amount 1000000
 
 log "Funding escrow"
-invoke client fund --caller "${CLIENT_ADDR}"
+invoke client fund --client "${CLIENT_ADDR}"
 
 log "Marking milestone delivered"
-invoke freelancer mark_delivered --caller "${FREELANCER}" --milestone_index 0
+invoke freelancer mark_delivered --freelancer "${FREELANCER}" --milestone_index 0
 
 log "Raising a dispute"
 invoke client raise_dispute --caller "${CLIENT_ADDR}" --milestone_index 0
@@ -114,7 +122,7 @@ invoke arbiter resolve_dispute \
   --release_to_freelancer false
 
 log "Asserting final milestone status is Refunded"
-JOB="$(invoke admin get_job --caller "${ADMIN}" 2>/dev/null || invoke admin get_job)"
+JOB="$(invoke admin get_job)"
 echo "${JOB}"
 echo "${JOB}" | grep -qi 'refunded' || fail "expected milestone status Refunded after dispute resolution"
 
