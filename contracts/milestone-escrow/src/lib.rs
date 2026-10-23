@@ -57,6 +57,11 @@ const MAX_BATCH_APPROVALS: u32 = 10;
 /// the TTL window restarts from that call's ledger timestamp.
 pub const CANCEL_APPROVAL_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
+/// Maximum allowed value for `auto_release_seconds` (10 years).  Prevents
+/// arithmetic overflow in deadline calculations (e.g. `claim_auto_release`)
+/// and avoids absurdly long auto-release windows.
+pub const MAX_AUTO_RELEASE_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -1148,7 +1153,7 @@ pub struct EmergencyPartyUnpausedEvent {
 /// Emitted by `emergency_pause_claim_refund` on its success path only.
 ///
 /// Published under the topics
-/// `(Symbol("emergency_pause_claim_refund"), admin)` so indexers can track
+/// `(symbol_short!("epclaim"), admin)` so indexers can track
 /// emergency refund settlements without replaying storage transitions.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3055,9 +3060,8 @@ impl MilestoneEscrow {
     /// corresponding `milestone_spec_hashes`.
     ///
     /// On any error path the Soroban host rolls back all storage writes made
-    /// during this invocation, including the reentrancy sentinel written at
-    /// entry, so the contract remains in its uninitialized state and a
-    /// subsequent valid call will succeed.
+    /// during this invocation, so the contract remains in its uninitialized state
+    /// and a subsequent valid call will succeed.
     ///
     /// # Errors
     /// Errors are returned in the order the corresponding checks appear in the
@@ -3095,10 +3099,9 @@ impl MilestoneEscrow {
     ///   - Any individual milestone amount is `≤ 0` (zero or negative amounts
     ///     are not valid escrow values).
     ///   - The sum of all milestone amounts overflows `i128`.
-    ///   - `auto_release_seconds` is `0` (zero disables the auto-release
-    ///     window entirely, which is not a valid configuration).
-    ///     Note: the `auto_release_seconds` check runs *after* the milestone
-    ///     amount validation in the current implementation.
+    ///   - `auto_release_seconds` is `0` or exceeds `MAX_AUTO_RELEASE_SECONDS`
+    ///     (10 years), which would disable the auto-release window or risk
+    ///     arithmetic overflow in deadline calculations.
     ///
     /// * [`Error::InvalidMilestone`] – An element of `milestone_amounts` could
     ///   not be retrieved by index during the milestone-storage loop.  In
@@ -3288,8 +3291,7 @@ impl MilestoneEscrow {
             return Err(Error::AlreadyInitialized);
         }
 
-        let created_at = env.ledger().timestamp();
-
+        // Validate all inputs BEFORE writing any state.
         Self::validate_address(&env, &admin)?;
         Self::validate_address(&env, &client)?;
         Self::validate_address(&env, &freelancer)?;
@@ -3320,7 +3322,39 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
+        // auto_release_seconds must be non-zero and have a reasonable upper bound
+        // to prevent overflow in deadline calculations (e.g. claim_auto_release).
+        if auto_release_seconds == 0 || auto_release_seconds > MAX_AUTO_RELEASE_SECONDS {
+            return Err(Error::InvalidAmount);
+        }
+        if dispute_timeout_seconds == 0 {
+            return Err(Error::InvalidDisputeTimeout);
+        }
+
+        // Write a sentinel immediately to prevent reentrancy: any reentrant
+        // call to `initialize` will now see `DataKey::Job` already present and
+        // return `AlreadyInitialized` before touching any other state.
+        // The sentinel is a zero-value `JobMeta` placeholder; the real meta
+        // overwrites it at the end of this function once all validation has
+        // passed and milestones have been stored.
+        let created_at = env.ledger().timestamp();
+        env.storage().instance().set(
+            &DataKey::Job,
+            &JobMeta {
+                client: admin.clone(),
+                freelancer: admin.clone(),
+                arbiter: admin.clone(),
+                token: admin.clone(),
+                created_at,
+                funded: false,
+                auto_release_seconds: 0,
+                milestone_count: 0,
+                total_amount: 0,
+            },
+        );
+
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Ep, &false);
         env.storage().persistent().set(
             &DataKey::PlatformFeeAllocation,
@@ -3337,12 +3371,6 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .set(&DataKey::WhitelistedTokens, &whitelist);
-        if auto_release_seconds == 0 {
-            return Err(Error::InvalidAmount);
-        }
-        if dispute_timeout_seconds == 0 {
-            return Err(Error::InvalidDisputeTimeout);
-        }
         if dispute_timeout_seconds != DISPUTE_TIMEOUT_SECONDS {
             env.storage()
                 .instance()
@@ -3370,14 +3398,7 @@ impl MilestoneEscrow {
             );
         }
 
-        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Version, &1u32);
-
-        let mut whitelist: Vec<Address> = Vec::new(&env);
-        whitelist.push_back(token.clone());
-        env.storage()
-            .persistent()
-            .set(&DataKey::WhitelistedTokens, &whitelist);
 
         let meta = JobMeta {
             client,
@@ -11470,7 +11491,7 @@ impl MilestoneEscrow {
     ///
     /// # Events
     /// On success only, publishes an [`EmergencyPauseClaimRefundEvent`] under
-    /// the topics `(Symbol("emergency_pause_claim_refund"), admin)`.
+    /// the topics `(symbol_short!("epclaim"), admin)`.
     ///
     /// # Returns
     /// A `RefundAllocation` whose two amounts sum to `total_amount` exactly.
@@ -11543,7 +11564,7 @@ impl MilestoneEscrow {
 
         // ── success-only event (#534)
         env.events().publish(
-            (Symbol::new(&env, "emergency_pause_claim_refund"), admin),
+            (symbol_short!("epclaim"), admin),
             EmergencyPauseClaimRefundEvent {
                 claimant: meta.client,
                 refund_amount: client_refund,

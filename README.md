@@ -23,28 +23,170 @@ The constructor's `settings.arbiter_fee_bps` sets an arbiter fee (basis points, 
 
 ## Contract Functions
 
+The contract exposes **94 public functions** grouped by category below.
+
+### Core Escrow (Initialization & Funding)
+
 | Function | Caller | Description |
 |---|---|---|
 | `__constructor` | Deployer | Atomically initializes the job with milestone amounts, spec hashes and `settings` (`EscrowSettings`: funding mode, dispute timeout, arbiter fee) |
 | `get_arbiter_fee_bps` | Anyone | Read the arbiter fee (0 when none) |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
 | `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
+| `get_funding_mode` | Anyone | View the current funding mode |
+| `accept_job` | Freelancer | Freelancer accepts the job |
+| `accept_arbiter` | Arbiter | Arbiter accepts the job |
+| `withdraw_unaccepted` | Client | Reclaim funds if job not accepted within 7 days |
 | `add_milestone` | Client + Freelancer | Append a new Pending milestone to a funded job; the client deposits its amount in the same call (capped at `MAX_MILESTONES` = 50) |
 | `reduce_milestone` | Client + Freelancer | Lower a Pending milestone's amount and refund the difference to the client |
-| `mark_delivered` | Freelancer | Mark a milestone as delivered |
-| `request_revision` | Client | Return a delivered milestone to Pending (max 3) |
-| `approve_milestone` | Client | Release funds for a delivered milestone |
-| `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration, committing a 32-byte `reason_hash` |
-| `submit_evidence` | Client or Freelancer | Anchor an evidence hash on an open dispute (max 10 per dispute) |
-| `get_dispute_info` | Anyone | Read the dispute reason hash, timestamps and evidence trail |
-| `escalate_dispute` | Client or Freelancer | After the timeout, restore a disputed milestone to its previous status |
-| `resolve_dispute` | Arbiter | Release to freelancer or refund to client |
+| `rotate_freelancer` | Client + Freelancer | Move the freelancer role and future payouts to a new address |
 | `get_job` | Anyone | View current job state |
 | `get_milestone` | Anyone | View one milestone without loading the whole job |
 | `milestone_count` | Anyone | Number of milestones |
-| `rotate_freelancer` | Client + Freelancer | Move the freelancer role and future payouts to a new address |
-| `sweep_excess` | Client or admin | Recover surplus tokens not backing obligations |
-| `emergency_unpause_parties` | Client and freelancer | Jointly lift a party-initiated pause |
+| `version` | Anyone | Get contract version |
+
+### Milestone Lifecycle
+
+| Function | Caller | Description |
+|---|---|---|
+| `mark_delivered` | Freelancer | Mark a milestone as delivered |
+| `request_revision` | Client | Return a delivered milestone to Pending (max 3 revisions) |
+| `get_revision_count` | Anyone | Get revision count for a milestone |
+| `extend_milestone_deadline` | Client | Extend auto-release deadline for a delivered milestone |
+| `claim_auto_release` | Freelancer | Auto-release a delivered milestone after deadline |
+| `trigger_auto_release` | Anyone | Same release as `claim_auto_release`, callable by anyone; pays the freelancer |
+| `time_until_auto_release` | Anyone | Time remaining until auto-release |
+| `approve_partial` | Client | Partially release funds for a milestone |
+| `approve_milestone` | Client | Release funds for a delivered milestone |
+| `approve_milestones` | Client | Approve up to 10 milestones in one call |
+| `withdraw` | Freelancer/Client | Withdraw released funds or refunds |
+
+### Disputes & Arbitration
+
+| Function | Caller | Description |
+|---|---|---|
+| `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration, committing a 32-byte `reason_hash` |
+| `submit_evidence` | Client or Freelancer | Anchor an evidence hash on an open dispute (max 10 per dispute) |
+| `get_dispute_info` | Anyone | Read the dispute reason hash, timestamps and evidence trail |
+| `escalate_dispute` | Client or Freelancer | After timeout, restore milestone to pre-dispute status |
+| `resolve_dispute` | Arbiter | Release to freelancer or refund to client, after any arbiter fee |
+| `dispute_arbitration_split` | Arbiter | Propose a split between client/freelancer |
+| `apply_dispute_arbitration_split` | Arbiter | Apply the proposed arbitration split |
+
+### Cancellation
+
+| Function | Caller | Description |
+|---|---|---|
+| `cancel_escrow` | Client or Freelancer | Initiate escrow cancellation |
+| `revoke_cancel_approval` | Client or Freelancer | Revoke cancellation approval |
+| `admin_override_cancel_release` | Admin | Admin override: release to freelancer |
+| `admin_override_cancel_refund` | Admin | Admin override: refund to client |
+
+### Emergency Pause
+
+| Function | Caller | Description |
+|---|---|---|
+| `emergency_pause` | Client & Freelancer | Jointly pause the contract |
+| `emergency_unpause` | Admin | Admin unpause the contract |
+| `emergency_unpause_parties` | Client & Freelancer | Jointly lift a party-initiated pause |
+| `emergency_pause_admin_override` | Admin | Admin override pause state |
+| `is_emergency_paused` | Anyone | Check if contract is paused |
+| `emergency_pause_split_refund` | Admin/Client/Freelancer | Compute split while paused (read-only) |
+| `emergency_pause_claim_refund` | Admin | Settle emergency refund (claim) |
+| `emergency_pause_allocation` | Admin/Client/Freelancer | Allocate frozen balance to parties |
+
+### Admin & Upgrades
+
+| Function | Caller | Description |
+|---|---|---|
+| `transfer_admin` | Admin | Transfer admin role |
+| `add_whitelisted_token` | Admin | Add token to whitelist |
+| `remove_whitelisted_token` | Admin | Remove token from whitelist |
+| `is_token_whitelisted` | Anyone | Check if token is whitelisted |
+| `get_whitelisted_tokens` | Anyone | List all whitelisted tokens |
+| `upgrade` | Admin | Upgrade contract WASM |
+| `migrate_cold_config` | Admin | Migrate config out of instance storage |
+| `admin_pause_escrow` | Admin | Admin pause (blocks user endpoints) |
+| `admin_resume_escrow` | Admin | Admin resume |
+| `propose_admin_transfer` | Admin | Propose multisig admin transfer |
+| `execute_admin_transfer` | Multisig | Execute proposed admin transfer |
+| `cancel_admin_transfer_proposal` | Admin | Cancel pending admin transfer |
+| `get_pending_admin_transfer` | Anyone | View pending admin transfer |
+
+### Platform Fees
+
+| Function | Caller | Description |
+|---|---|---|
+| `set_platform_fee_allocation` | Admin | Set fee split (client/freelancer/treasury) |
+| `lock_platform_fee_allocation` | Admin | Lock fee allocation |
+| `pf_alloc_admin_override` | Admin | Admin override for fee allocation |
+| `get_platform_fee_allocation` | Anyone | View current fee allocation |
+| `calculate_platform_fee_split` | Anyone | Calculate fee split for an amount |
+
+### Payment Streaming
+
+| Function | Caller | Description |
+|---|---|---|
+| `payment_streaming_milestones` | Admin | Configure streaming for milestones |
+| `payment_streaming_consent` | Client/Freelancer | Consent to streaming config |
+
+### Time Extensions
+
+| Function | Caller | Description |
+|---|---|---|
+| `milestone_time_extensions` | Admin | Configure time extensions |
+| `time_extensions_consent` | Client/Freelancer | Consent to time extensions |
+
+### Multisig
+
+| Function | Caller | Description |
+|---|---|---|
+| `multisig_approval_init` | Admin | Initialize multisig signers & threshold |
+| `multisig_approve` | Signer | Approve a multisig proposal |
+| `is_multisig_approved` | Anyone | Check if proposal is approved |
+| `multisig_lock` | Admin | Lock multisig (require admin intervention) |
+| `is_multisig_locked` | Anyone | Check if multisig is locked |
+| `multisig_admin_override_release` | Admin | Override locked multisig: release |
+| `multisig_admin_override_refund` | Admin | Override locked multisig: refund |
+| `multisig_split_refund` | Signers | Split refund via multisig |
+
+### Interest Yield
+
+| Function | Caller | Description |
+|---|---|---|
+| `escrow_interest_yield` | Anyone | Estimate interest yield |
+| `set_escrow_interest_yield` | Client/Freelancer | Configure yield share |
+| `set_interest_yield_consent` | Client/Freelancer | Consent to yield config |
+| `lock_escrow_interest_yield` | Admin | Lock yield config |
+| `unlock_escrow_interest_yield` | Admin | Unlock yield config |
+| `is_escrow_interest_yield_locked` | Anyone | Check if yield is locked |
+| `interest_yield_split_refund` | Admin | Split refund with yield |
+| `get_escrow_interest_yield` | Anyone | View yield state |
+| `admin_set_yield_rate` | Admin | Set annual yield rate (bps) |
+| `admin_accrue_yield` | Admin | Accrue yield to admin |
+
+### Tax Withholding
+
+| Function | Caller | Description |
+|---|---|---|
+| `tax_withholding_deductions` | Client + Freelancer | Record a tax withholding for a milestone (needs a tax recipient when tax > 0) |
+| `set_tax_recipient` | Admin | Set the address that receives withheld tax |
+| `get_tax_recipient` | Anyone | Read the tax recipient |
+| `tax_withholding_split_refund` | Admin | Split refund with tax |
+| `admin_override_tax_release` | Admin | Override tax: release |
+| `admin_override_tax_refund` | Admin | Override tax: refund |
+| `admin_override_tax_split_refund` | Admin | Override tax: split refund |
+| `get_yield_info` | Anyone | View yield rate, accrued, paused |
+| `admin_tax_withholding_deductions` | Admin | Admin compute tax withholding |
+
+### Utilities
+
+| Function | Caller | Description |
+|---|---|---|
+| `sweep_excess` | Client or Admin | Recover surplus tokens |
+| `get_milestone_spec_hash` | Anyone | Get spec hash for milestone |
+| `get_reputation` | Anyone | Get address reputation |
+| `compute_ratio_allocation` | Anyone | Compute ratio allocation (largest remainder) |
 
 Events carry party addresses as extra topics for `getEvents` filtering; see
 [EVENTS.md](EVENTS.md#indexed-topics).

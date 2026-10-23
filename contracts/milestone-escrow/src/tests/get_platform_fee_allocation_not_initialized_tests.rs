@@ -387,7 +387,7 @@ fn failed_initialize_leaves_no_defaulted_allocation_behind() {
 
     let (contract_id, client) = fresh_contract(&env);
 
-    // `auto_release_seconds == 0` is rejected *after* the allocation write.
+    // `auto_release_seconds == 0` is rejected *before* any state writes.
     let result = client.try_initialize(
         &admin,
         &client_addr,
