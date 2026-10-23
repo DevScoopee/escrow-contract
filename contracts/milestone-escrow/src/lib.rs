@@ -311,6 +311,25 @@ pub enum FundingMode {
     PerMilestone,
 }
 
+/// Per-escrow settings fixed at deployment by `__constructor` (issue #665).
+///
+/// They used to be set by separate `initialize_with_*` entry points, which a
+/// constructor-deployed contract can no longer call: the constructor has
+/// already initialised it.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct EscrowSettings {
+    /// `Upfront` funds the whole job at once; `PerMilestone` funds each
+    /// milestone separately (issue #766).
+    pub funding_mode: FundingMode,
+    /// Seconds after which a dispute may be escalated (issue #784). Must be
+    /// non-zero; `DISPUTE_TIMEOUT_SECONDS` is the usual value.
+    pub dispute_timeout_seconds: u64,
+    /// Arbiter fee on dispute resolution, in basis points, at most
+    /// `MAX_ARBITER_FEE_BPS` (issue #738). 0 means no fee.
+    pub arbiter_fee_bps: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 struct JobMeta {
@@ -1933,7 +1952,12 @@ impl MilestoneEscrow {
     }
 
     fn ensure_not_paused(env: &Env) -> Result<(), Error> {
-        if Self::read_emergency_paused(env) {
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+        if paused || Self::read_emergency_paused(env) {
             return Err(Error::Paused);
         }
         let cancel_locked = env
@@ -3060,6 +3084,106 @@ impl MilestoneEscrow {
     ///   not be retrieved by index during the milestone-storage loop.  In
     ///   practice this indicates an internal SDK-level error rather than a
     ///   caller mistake.
+    ///
+    /// Unit tests are built with a no-argument constructor instead (below), so
+    /// they can register the contract and call the test-only `initialize`;
+    /// `constructor_tests` deploys a release build to cover this one.
+    #[cfg(not(test))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        token: Address,
+        auto_release_seconds: u64,
+        milestone_amounts: Vec<i128>,
+        milestone_spec_hashes: Vec<BytesN<32>>,
+        settings: EscrowSettings,
+    ) -> Result<(), Error> {
+        Self::initialize_with_settings(
+            env,
+            admin,
+            client,
+            freelancer,
+            arbiter,
+            token,
+            auto_release_seconds,
+            milestone_amounts,
+            milestone_spec_hashes,
+            settings,
+        )
+    }
+
+    /// Test builds only: lets unit tests register the contract without
+    /// constructor arguments and initialise it through `initialize`.
+    #[cfg(test)]
+    pub fn __constructor(_env: Env) {}
+
+    /// Shared body of `__constructor` and the test-only initialisers.
+    ///
+    /// # Errors
+    /// * [`Error::InvalidRatio`] – `settings.arbiter_fee_bps` exceeds
+    ///   `MAX_ARBITER_FEE_BPS`.
+    /// * [`Error::InvalidDisputeTimeout`] – `settings.dispute_timeout_seconds`
+    ///   is zero.
+    /// * Every error documented on `__constructor`.
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_with_settings(
+        env: Env,
+        admin: Address,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        token: Address,
+        auto_release_seconds: u64,
+        milestone_amounts: Vec<i128>,
+        milestone_spec_hashes: Vec<BytesN<32>>,
+        settings: EscrowSettings,
+    ) -> Result<(), Error> {
+        if settings.arbiter_fee_bps > MAX_ARBITER_FEE_BPS {
+            return Err(Error::InvalidRatio);
+        }
+        Self::initialize_inner(
+            env.clone(),
+            admin,
+            client,
+            freelancer,
+            arbiter,
+            token,
+            auto_release_seconds,
+            settings.dispute_timeout_seconds,
+            milestone_amounts,
+            milestone_spec_hashes,
+        )?;
+        if settings.funding_mode != FundingMode::Upfront {
+            env.storage()
+                .instance()
+                .set(&DataKey::FundingMode, &settings.funding_mode);
+        }
+        if settings.arbiter_fee_bps > 0 {
+            env.storage()
+                .instance()
+                .set(&DataKey::ArbiterFeeBps, &settings.arbiter_fee_bps);
+        }
+        Ok(())
+    }
+
+    /// The default settings: upfront funding, the standard dispute timeout
+    /// and no arbiter fee.
+    #[cfg(test)]
+    fn default_settings() -> EscrowSettings {
+        EscrowSettings {
+            funding_mode: FundingMode::Upfront,
+            dispute_timeout_seconds: DISPUTE_TIMEOUT_SECONDS,
+            arbiter_fee_bps: 0,
+        }
+    }
+
+    /// Test-only initialiser with default settings, for tests that register
+    /// the contract without constructor arguments.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
@@ -3072,7 +3196,7 @@ impl MilestoneEscrow {
         milestone_amounts: Vec<i128>,
         milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
-        Self::initialize_inner(
+        Self::initialize_with_settings(
             env,
             admin,
             client,
@@ -3080,13 +3204,13 @@ impl MilestoneEscrow {
             arbiter,
             token,
             auto_release_seconds,
-            DISPUTE_TIMEOUT_SECONDS,
             milestone_amounts,
             milestone_spec_hashes,
+            Self::default_settings(),
         )
     }
 
-    /// Initialize a new milestone escrow with a custom dispute timeout.
+    /// Test-only: `initialize` with a custom dispute timeout.
     ///
     /// After `dispute_timeout_seconds`, either the client or freelancer may
     /// call `escalate_dispute` to restore the milestone to its status before
@@ -3094,6 +3218,7 @@ impl MilestoneEscrow {
     ///
     /// # Errors
     /// * [`Error::InvalidDisputeTimeout`] – `dispute_timeout_seconds` is zero.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn initialize_with_dispute_timeout(
         env: Env,
@@ -3107,7 +3232,7 @@ impl MilestoneEscrow {
         milestone_amounts: Vec<i128>,
         milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
-        Self::initialize_inner(
+        Self::initialize_with_settings(
             env,
             admin,
             client,
@@ -3115,9 +3240,12 @@ impl MilestoneEscrow {
             arbiter,
             token,
             auto_release_seconds,
-            dispute_timeout_seconds,
             milestone_amounts,
             milestone_spec_hashes,
+            EscrowSettings {
+                dispute_timeout_seconds,
+                ..Self::default_settings()
+            },
         )
     }
 
@@ -3140,27 +3268,7 @@ impl MilestoneEscrow {
             return Err(Error::AlreadyInitialized);
         }
 
-        // Write a sentinel immediately to prevent reentrancy: any reentrant
-        // call to `initialize` will now see `DataKey::Job` already present and
-        // return `AlreadyInitialized` before touching any other state.
-        // The sentinel is a zero-value `JobMeta` placeholder; the real meta
-        // overwrites it at the end of this function once all validation has
-        // passed and milestones have been stored.
         let created_at = env.ledger().timestamp();
-        env.storage().instance().set(
-            &DataKey::Job,
-            &JobMeta {
-                client: admin.clone(),
-                freelancer: admin.clone(),
-                arbiter: admin.clone(),
-                token: admin.clone(),
-                created_at,
-                funded: false,
-                auto_release_seconds: 0,
-                milestone_count: 0,
-                total_amount: 0,
-            },
-        );
 
         Self::validate_address(&env, &admin)?;
         Self::validate_address(&env, &client)?;
@@ -3291,8 +3399,8 @@ impl MilestoneEscrow {
         Ok(())
     }
 
-    /// Same as `initialize`, with an explicit funding mode. `initialize`
-    /// always uses `FundingMode::Upfront` so existing callers stay compatible.
+    /// Test-only: `initialize` with an explicit funding mode.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn initialize_with_funding_mode(
         env: Env,
@@ -3306,8 +3414,8 @@ impl MilestoneEscrow {
         milestone_spec_hashes: Vec<BytesN<32>>,
         funding_mode: FundingMode,
     ) -> Result<(), Error> {
-        Self::initialize(
-            env.clone(),
+        Self::initialize_with_settings(
+            env,
             admin,
             client,
             freelancer,
@@ -3316,26 +3424,15 @@ impl MilestoneEscrow {
             auto_release_seconds,
             milestone_amounts,
             milestone_spec_hashes,
-        )?;
-        env.storage()
-            .instance()
-            .set(&DataKey::FundingMode, &funding_mode);
-        Ok(())
+            EscrowSettings {
+                funding_mode,
+                ..Self::default_settings()
+            },
+        )
     }
 
-    /// Same as `initialize`, with an arbiter fee (issue #738).
-    ///
-    /// `arbiter_fee_bps` is the share of a disputed milestone's remaining
-    /// balance paid to the arbiter when it resolves the dispute through
-    /// `resolve_dispute` or `apply_dispute_arbitration_split`; the parties
-    /// split what is left.  It is fixed here, at construction, and cannot be
-    /// changed later.  Milestones that never go to dispute pay no fee.
-    ///
-    /// # Errors
-    /// * [`Error::InvalidRatio`] – `arbiter_fee_bps` exceeds
-    ///   `MAX_ARBITER_FEE_BPS` (1,000 bps = 10 %).  Checked before anything
-    ///   is written.
-    /// * Every error `initialize` returns.
+    /// Test-only: `initialize` with an arbiter fee (issue #738).
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn initialize_with_arbiter_fee(
         env: Env,
@@ -3349,11 +3446,8 @@ impl MilestoneEscrow {
         milestone_spec_hashes: Vec<BytesN<32>>,
         arbiter_fee_bps: u32,
     ) -> Result<(), Error> {
-        if arbiter_fee_bps > MAX_ARBITER_FEE_BPS {
-            return Err(Error::InvalidRatio);
-        }
-        Self::initialize(
-            env.clone(),
+        Self::initialize_with_settings(
+            env,
             admin,
             client,
             freelancer,
@@ -3362,13 +3456,11 @@ impl MilestoneEscrow {
             auto_release_seconds,
             milestone_amounts,
             milestone_spec_hashes,
-        )?;
-        if arbiter_fee_bps > 0 {
-            env.storage()
-                .instance()
-                .set(&DataKey::ArbiterFeeBps, &arbiter_fee_bps);
-        }
-        Ok(())
+            EscrowSettings {
+                arbiter_fee_bps,
+                ..Self::default_settings()
+            },
+        )
     }
 
     /// The arbiter fee in basis points (issue #738); 0 when none was set.

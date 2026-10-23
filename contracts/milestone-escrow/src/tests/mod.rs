@@ -32,6 +32,7 @@ mod cancel_approval_ttl_tests;
 mod cancel_escrow_split_refund_guards_tests;
 mod cancel_escrow_test;
 mod cold_config_storage_tests;
+mod constructor_tests;
 mod cost_tests;
 mod dispute_evidence_tests;
 mod dispute_resolution_branch_tests;
@@ -330,18 +331,18 @@ fn setup_escrow_inner(
     let total: i128 = milestone_amounts.iter().sum();
     token_admin.mint(&client_addr, &total);
 
+    let spec_hashes = crate::spec_hashes_for(&milestone_amounts);
     let contract_id = env.register(MilestoneEscrow, ());
     let client = MilestoneEscrowClient::new(env, &contract_id);
-
     client.initialize(
         &admin_addr,
         &client_addr,
         &freelancer_addr,
         &arbiter_addr,
         &token_contract_id,
-        &604800,
+        &604800u64,
         &milestone_amounts,
-        &crate::spec_hashes_for(&milestone_amounts),
+        &spec_hashes,
     );
     client.accept_job(&freelancer_addr);
     client.accept_arbiter(&arbiter_addr);

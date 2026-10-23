@@ -66,19 +66,29 @@ stellar contract build --manifest-path "${MANIFEST}"
 WASM="${ROOT_DIR}/target/wasm32v1-none/release/milestone_escrow.wasm"
 [[ -f "${WASM}" ]] || fail "expected WASM at ${WASM}"
 
-log "Deploying contract"
-CONTRACT_ID="$(stellar contract deploy \
-  --wasm "${WASM}" \
-  --source admin \
-  --network "${NETWORK}")"
-echo "contract id: ${CONTRACT_ID}"
-
 log "Deploying a test SAC token"
 TOKEN_ID="$(stellar contract asset deploy \
   --asset ":${ADMIN}" \
   --source admin \
   --network "${NETWORK}")"
 echo "token id: ${TOKEN_ID}"
+
+log "Deploying contract with constructor args"
+CONTRACT_ID="$(stellar contract deploy \
+  --wasm "${WASM}" \
+  --source admin \
+  --network "${NETWORK}" \
+  -- \
+  --admin "${ADMIN}" \
+  --client "${CLIENT_ADDR}" \
+  --freelancer "${FREELANCER}" \
+  --arbiter "${ARBITER}" \
+  --token "${TOKEN_ID}" \
+  --auto_release_seconds 604800 \
+  --milestone_amounts '["1000000"]' \
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]' \
+  --settings '{"funding_mode":"Upfront","dispute_timeout_seconds":2592000,"arbiter_fee_bps":0}')"
+echo "contract id: ${CONTRACT_ID}"
 
 invoke() {
   stellar contract invoke \
@@ -87,17 +97,6 @@ invoke() {
     --network "${NETWORK}" \
     -- "${@:2}"
 }
-
-log "Initializing escrow"
-invoke admin initialize \
-  --admin "${ADMIN}" \
-  --client "${CLIENT_ADDR}" \
-  --freelancer "${FREELANCER}" \
-  --arbiter "${ARBITER}" \
-  --token "${TOKEN_ID}" \
-  --auto_release_seconds 604800 \
-  --milestone_amounts '["1000000"]' \
-  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
 
 log "Minting test tokens to the client"
 stellar contract invoke \
