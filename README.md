@@ -17,6 +17,10 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 
 `initialize` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
+## Arbiter Fee
+
+`initialize_with_arbiter_fee` takes an `arbiter_fee_bps` (basis points, max 1,000 = 10 %). When an escrow has a fee, `resolve_dispute` and `apply_dispute_arbitration_split` first pay that share of the disputed milestone's remaining balance to the arbiter, then pay or split the rest between client and freelancer. The fee is fixed at construction. Escrows created with `initialize` have no fee, and milestones that never go to dispute never pay one (#738).
+
 ## Contract Functions
 
 | Function | Caller | Description |
@@ -24,6 +28,8 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 | `initialize` | Anyone | Set up job with milestone amounts and spec hashes, a 30-day dispute timeout and Upfront funding |
 | `initialize_with_dispute_timeout` | Anyone | Set up job with a custom, non-zero dispute timeout |
 | `initialize_with_funding_mode` | Anyone | Set up job with Upfront or PerMilestone funding |
+| `initialize_with_arbiter_fee` | Anyone | Set up job with an arbiter fee on dispute resolution (max 1,000 bps) |
+| `get_arbiter_fee_bps` | Anyone | Read the arbiter fee (0 when none) |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
 | `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
