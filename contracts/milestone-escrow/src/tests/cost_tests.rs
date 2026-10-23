@@ -46,16 +46,18 @@ struct Cost {
 /// hash plus an empty evidence list) and `submit_evidence` is measured for
 /// the first time. Re-baselined again after constructor deployment (#665),
 /// which includes the contract instance ledger entry alongside
-/// initialization.
+/// initialization. Instructions re-baselined after the TTL extension (#669):
+/// storing a milestone now extends its entry's and the instance's TTL, which
+/// costs instructions but no extra ledger write.
 const BUDGETS: [(&str, i64, u32, u32); 8] = [
     ("initialize", 235_000, 7, 1_850),
     ("fund", 362_000, 4, 1_470),
-    ("mark_delivered", 192_000, 3, 590),
-    ("approve_milestone", 448_000, 7, 1_380),
-    ("claim_auto_release", 471_000, 6, 1_255),
-    ("raise_dispute", 274_000, 5, 890),
+    ("mark_delivered", 224_000, 3, 590),
+    ("approve_milestone", 490_000, 7, 1_380),
+    ("claim_auto_release", 517_000, 6, 1_255),
+    ("raise_dispute", 316_000, 5, 890),
     ("submit_evidence", 201_000, 2, 580),
-    ("resolve_dispute", 510_000, 7, 1_255),
+    ("resolve_dispute", 558_000, 7, 1_255),
 ];
 
 fn fixture(env: &Env) -> Fixture<'_> {
