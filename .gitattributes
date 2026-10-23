@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings or bash rejects them on Linux CI and in
+# the reproducible-build container.
+*.sh text eol=lf
+build/*.Dockerfile text eol=lf

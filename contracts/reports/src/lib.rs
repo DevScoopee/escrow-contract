@@ -47,6 +47,7 @@ pub enum MilestoneStatus {
     Released,
     Disputed,
     Refunded,
+    Split,
 }
 
 #[contracttype]
@@ -77,6 +78,7 @@ struct JobMeta {
     freelancer: Address,
     arbiter: Address,
     token: Address,
+    created_at: u64,
     funded: bool,
     auto_release_seconds: u64,
     milestone_count: u32,
@@ -171,6 +173,7 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitializedEvent {
+    pub admin: Address,
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Address,
@@ -179,6 +182,7 @@ pub struct InitializedEvent {
     pub milestone_amounts: Vec<i128>,
     pub total_amount: i128,
     pub milestone_count: u32,
+    pub created_at: u64,
 }
 
 #[contracttype]
@@ -215,6 +219,7 @@ pub struct DeadlineExtendedEvent {
     pub client: Address,
     pub extra_seconds: u32,
     pub new_extension: u32,
+    pub new_deadline: u64,
 }
 
 #[contracttype]
@@ -571,6 +576,17 @@ impl MilestoneEscrow {
         env.storage().temporary().get(&DataKey::DeliveredAt(index))
     }
 
+    fn auto_release_deadline(
+        meta: &JobMeta,
+        delivered_at: u64,
+        extension: u32,
+    ) -> Result<u64, Error> {
+        delivered_at
+            .checked_add(meta.auto_release_seconds)
+            .and_then(|deadline| deadline.checked_add(extension as u64))
+            .ok_or(Error::InvalidAmount)
+    }
+
     /// Write the terminal approval flag to temporary storage.  This is a
     /// cheap, short-lived signal that the milestone at `index` has been fully
     /// released via `approve_milestone`.  Callers that only need to verify
@@ -793,11 +809,13 @@ impl MilestoneEscrow {
             .instance()
             .set(&DataKey::WhitelistedTokens, &whitelist);
 
+        let created_at = env.ledger().timestamp();
         let meta = JobMeta {
             client,
             freelancer,
             arbiter,
             token,
+            created_at,
             funded: false,
             auto_release_seconds,
             milestone_count,
@@ -812,6 +830,7 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("init"),),
             InitializedEvent {
+                admin,
                 client: meta.client,
                 freelancer: meta.freelancer,
                 arbiter: meta.arbiter,
@@ -820,6 +839,7 @@ impl MilestoneEscrow {
                 milestone_amounts,
                 total_amount: meta.total_amount,
                 milestone_count: meta.milestone_count,
+                created_at: meta.created_at,
             },
         );
 
@@ -1213,6 +1233,9 @@ impl MilestoneEscrow {
         let new_extension = current_extension
             .checked_add(extra_seconds)
             .ok_or(Error::InvalidExtension)?;
+        let delivered_at =
+            Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
+        let new_deadline = Self::auto_release_deadline(&meta, delivered_at, new_extension)?;
 
         env.storage()
             .temporary()
@@ -1226,6 +1249,7 @@ impl MilestoneEscrow {
                 client,
                 extra_seconds,
                 new_extension,
+                new_deadline,
             },
         );
 
@@ -1287,12 +1311,7 @@ impl MilestoneEscrow {
             return Err(Error::InvalidStatus);
         }
 
-        // CHECK 3: Validate auto_release_seconds is non-zero.
-        if meta.auto_release_seconds == 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        // CHECK 4: Read the delivery timestamp from temporary storage first
+        // CHECK 3: Read the delivery timestamp from temporary storage first
         //    (optimised ledger-footprint path).  Fall back to the value stored on
         //    the persistent Milestone entry so that entries written before this
         //    migration remain fully functional.
@@ -1300,16 +1319,13 @@ impl MilestoneEscrow {
             Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
         let extension = Self::load_time_extension(&env, milestone_index);
 
-        let deadline = delivered_at
-            .checked_add(meta.auto_release_seconds)
-            .and_then(|d| d.checked_add(extension as u64))
-            .ok_or(Error::InvalidAmount)?;
+        let deadline = Self::auto_release_deadline(&meta, delivered_at, extension)?;
         let current = env.ledger().timestamp();
         if current < deadline {
             return Err(Error::DeadlineNotPassed);
         }
 
-        // CHECK 5: Compute remaining using checked subtraction so that corrupted
+        // CHECK 4: Compute remaining using checked subtraction so that corrupted
         //    or adversarially-crafted storage values (released_amount > amount)
         //    never produce a silent underflow.
         let remaining = milestone
@@ -1362,7 +1378,7 @@ impl MilestoneEscrow {
         let delivered_at =
             Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
         let extension = Self::load_time_extension(&env, milestone_index);
-        let deadline = delivered_at + meta.auto_release_seconds + (extension as u64);
+        let deadline = Self::auto_release_deadline(&meta, delivered_at, extension).unwrap();
         let current = env.ledger().timestamp();
         (deadline as i64) - (current as i64)
     }
