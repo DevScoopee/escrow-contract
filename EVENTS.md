@@ -5,6 +5,24 @@ All events emitted by the `milestone-escrow` contract, keyed by their
 `event_docs_sync_tests` module — a topic cannot be added to `lib.rs` without a
 row here, and a row here must correspond to a topic in the source.
 
+## Indexed topics
+
+`topic[0]` is always the event name below. These events also carry party
+addresses as further topics, so RPC `getEvents` can filter by participant
+(issue #739):
+
+| Event      | Topics after the name                 |
+| ---------- | ------------------------------------- |
+| `init`     | `client`, `freelancer`, `arbiter`     |
+| `fund`     | `client`, `freelancer`, `arbiter`     |
+| `deliver`  | `freelancer`                          |
+| `claim`    | `freelancer`                          |
+| `approve`  | `client`                              |
+| `dispute`  | `caller`                              |
+| `freerot`  | `new_freelancer`                      |
+
+## Events
+
 | Topic      | Event struct                     | Kind              |
 | ---------- | -------------------------------- | ----------------- |
 | `init`     | `InitializedEvent`               | state change      |
@@ -13,6 +31,7 @@ row here, and a row here must correspond to a topic in the source.
 | `acceptarb`| `JobAcceptedEvent`               | state change      |
 | `unaccref` | `UnacceptedWithdrawnEvent`       | state change      |
 | `withdraw` | `WithdrawnEvent`                 | state change      |
+| `freerot`  | `FreelancerRotatedEvent`         | state change      |
 | `msfund`   | `MilestoneFundedEvent`           | state change      |
 | `ms_add`   | `MilestoneAddedEvent`            | state change      |
 | `ms_reduce`| `MilestoneReducedEvent`          | state change      |

@@ -40,8 +40,14 @@ The constructor's `settings.arbiter_fee_bps` sets an arbiter fee (basis points, 
 | `escalate_dispute` | Client or Freelancer | After the timeout, restore a disputed milestone to its previous status |
 | `resolve_dispute` | Arbiter | Release to freelancer or refund to client |
 | `get_job` | Anyone | View current job state |
+| `get_milestone` | Anyone | View one milestone without loading the whole job |
+| `milestone_count` | Anyone | Number of milestones |
+| `rotate_freelancer` | Client + Freelancer | Move the freelancer role and future payouts to a new address |
 | `sweep_excess` | Client or admin | Recover surplus tokens not backing obligations |
 | `emergency_unpause_parties` | Client and freelancer | Jointly lift a party-initiated pause |
+
+Events carry party addresses as extra topics for `getEvents` filtering; see
+[EVENTS.md](EVENTS.md#indexed-topics).
 
 ## Milestone States
 
@@ -119,6 +125,27 @@ cargo test -p milestone-escrow
 
 ## Deploy (Testnet)
 
+`scripts/deploy-testnet.sh` builds the reproducible wasm, uploads it, deploys
+with constructor arguments from environment variables, and appends
+`{date, network, wasm_hash, contract_id, admin}` to `deployments/testnet.json`
+(issue #745):
+
+```bash
+export SOURCE_ACCOUNT=testnet-deployer
+export ADMIN_ADDRESS=G...
+export CLIENT_ADDRESS=G...
+export FREELANCER_ADDRESS=G...
+export ARBITER_ADDRESS=G...
+export TOKEN_ADDRESS=C...
+export AUTO_RELEASE_SECONDS=2592000
+export MILESTONE_AMOUNTS='["10000000"]'
+export MILESTONE_SPEC_HASHES='["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]'
+# Optional: FUNDING_MODE (Upfront), DISPUTE_TIMEOUT_SECONDS (2592000), ARBITER_FEE_BPS (0)
+scripts/deploy-testnet.sh
+```
+
+The equivalent manual deploy:
+
 ```bash
 scripts/build-reproducible.sh
 stellar contract deploy \
@@ -133,12 +160,12 @@ stellar contract deploy \
   --token <token-address> \
   --auto_release_seconds 604800 \
   --milestone_amounts '["1000000"]' \
-  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]' \
+  --settings '{"funding_mode":"Upfront","dispute_timeout_seconds":2592000,"arbiter_fee_bps":0}'
 ```
 
-Then record the contract ID, `source_commit` and `wasm_sha256` from
-`dist/build-info.json` in `deployments/<network>.json`, and the hash in
-`CHANGELOG.md`.
+Record the `source_commit` and `wasm_sha256` from `dist/build-info.json` with
+the deployment, and the hash in `CHANGELOG.md`.
 
 After upgrading an existing deployment to this version, the admin should call
 `migrate_cold_config` once to move the whitelist, multisig, yield and fee
