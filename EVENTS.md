@@ -14,6 +14,8 @@ row here, and a row here must correspond to a topic in the source.
 | `unaccref` | `UnacceptedWithdrawnEvent`       | state change      |
 | `withdraw` | `WithdrawnEvent`                 | state change      |
 | `msfund`   | `MilestoneFundedEvent`           | state change      |
+| `ms_add`   | `MilestoneAddedEvent`            | state change      |
+| `ms_reduce`| `MilestoneReducedEvent`          | state change      |
 | `deliver`  | `DeliveredEvent`                 | state change      |
 | `msrev`    | `RevisionRequestedEvent`         | state change      |
 | `approve`  | `ApprovedEvent`                  | state change      |

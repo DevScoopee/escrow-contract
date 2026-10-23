@@ -96,12 +96,9 @@ fn add_milestone_updates_balances_and_emits_event() {
 
     escrow.add_milestone(&client_addr, &freelancer_addr, &500_i128);
 
-    assert_eq!(balance(&env, &token_addr, &client_addr), 0);
-    assert_eq!(balance(&env, &token_addr, &contract_id), 3_500);
-    // Conservation invariant: escrow balance == total_amount.
-    let meta = job_meta(&env, &contract_id);
-    assert_eq!(balance(&env, &token_addr, &contract_id), meta.total_amount);
-
+    // Read events immediately after the call — all_event_tuples only captures
+    // the most recent contract invocation; any subsequent contract/token call
+    // would clear the log.
     assert_eq!(topic_count(&env, symbol_short!("ms_add")), 1);
     let event: MilestoneAddedEvent = last_event_payload(&env);
     assert_eq!(event.total_amount, 3_500_i128);
@@ -111,6 +108,12 @@ fn add_milestone_updates_balances_and_emits_event() {
     assert_eq!(event.milestone_index, 2);
     assert_eq!(event.amount, 500);
     assert_eq!(event.milestone_count, 3);
+
+    assert_eq!(balance(&env, &token_addr, &client_addr), 0);
+    assert_eq!(balance(&env, &token_addr, &contract_id), 3_500);
+    // Conservation invariant: escrow balance == total_amount.
+    let meta = job_meta(&env, &contract_id);
+    assert_eq!(balance(&env, &token_addr, &contract_id), meta.total_amount);
 }
 
 #[test]
@@ -239,6 +242,18 @@ fn reduce_milestone_refunds_difference_and_emits_event() {
 
     escrow.reduce_milestone(&client_addr, &freelancer_addr, &0u32, &600_i128);
 
+    // Read events immediately — all_event_tuples only captures the most
+    // recent contract invocation; any subsequent call would clear the log.
+    assert_eq!(topic_count(&env, symbol_short!("ms_reduce")), 1);
+    let event: MilestoneReducedEvent = last_event_payload(&env);
+    assert_eq!(event.contract_id, contract_id);
+    assert_eq!(event.milestone_index, 0);
+    assert_eq!(event.old_amount, 1_000);
+    assert_eq!(event.new_amount, 600);
+    assert_eq!(event.refund, 400);
+    assert_eq!(event.total_amount, 2_600);
+    assert_eq!(event.milestone_count, 2);
+
     let job = escrow.get_job();
     let milestone = job.milestones.get(0).expect("first milestone exists");
     assert_eq!(milestone.amount, 600);
@@ -252,16 +267,6 @@ fn reduce_milestone_refunds_difference_and_emits_event() {
     // Conservation: exactly the 400 difference moved back to the client.
     assert_eq!(balance(&env, &token_addr, &client_addr), 400);
     assert_eq!(balance(&env, &token_addr, &contract_id), 2_600);
-
-    assert_eq!(topic_count(&env, symbol_short!("ms_reduce")), 1);
-    let event: MilestoneReducedEvent = last_event_payload(&env);
-    assert_eq!(event.contract_id, contract_id);
-    assert_eq!(event.milestone_index, 0);
-    assert_eq!(event.old_amount, 1_000);
-    assert_eq!(event.new_amount, 600);
-    assert_eq!(event.refund, 400);
-    assert_eq!(event.total_amount, 2_600);
-    assert_eq!(event.milestone_count, 2);
 }
 
 #[test]
