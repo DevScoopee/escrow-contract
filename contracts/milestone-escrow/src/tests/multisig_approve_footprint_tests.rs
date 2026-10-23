@@ -501,3 +501,38 @@ fn test_multisig_approve_rejections_write_no_bitmap() {
     assert_eq!(state.bitmap, 0b001);
     assert_eq!(stored_bitmap(&env, &empty_id, 40u32), 0b001);
 }
+
+// ── TTL persistence test ───────────────────────────────────────────────────────
+
+/// Approvals stored in persistent storage survive TTL expiry for multi-day
+/// governance workflows. This test verifies that advancing the ledger past
+/// the default TTL does not cause approvals to disappear.
+#[test]
+fn test_multisig_approve_persists_across_ledger_advancement() {
+    use soroban_sdk::testutils::Ledger as _;
+
+    let env = Env::default();
+    let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
+    let s0 = signers.get(0).unwrap();
+    let s1 = signers.get(1).unwrap();
+
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
+
+    // First signer approves proposal 1
+    let state1 = escrow.multisig_approve(&s0, &1u32);
+    assert_eq!(state1.approvals, 1);
+    assert_eq!(state1.bitmap, 0b001);
+    assert!(!state1.approved);
+
+    // Advance ledger significantly (simulating multiple days)
+    env.ledger().with_mut(|li| li.sequence_number += 10000);
+
+    // Second signer approves the same proposal - both approvals should count
+    let state2 = escrow.multisig_approve(&s1, &1u32);
+    assert_eq!(state2.approvals, 2);
+    assert_eq!(state2.bitmap, 0b011);
+    assert!(state2.approved);
+
+    // The bitmap lives in the persistent proposal record (#785).
+    assert_eq!(stored_bitmap(&env, &contract_id, 1u32), 0b011);
+}
