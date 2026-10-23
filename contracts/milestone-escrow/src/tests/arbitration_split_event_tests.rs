@@ -57,7 +57,7 @@ fn disputed_escrow(
     let (client_addr, freelancer_addr, arbiter_addr, _admin, _token, contract_id, client) =
         setup_funded_escrow(env, milestone_amounts);
     client.mark_delivered(&freelancer_addr, &0u32);
-    client.raise_dispute(&client_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(env));
     (
         contract_id,
         arbiter_addr,

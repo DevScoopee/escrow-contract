@@ -69,7 +69,7 @@ fn escalation_fails_before_timeout_and_restores_delivered_after_timeout() {
 
     let (client_addr, freelancer_addr, _, _, client) = custom_timeout_escrow(&env, 60);
     env.ledger().set_timestamp(1_100);
-    client.raise_dispute(&client_addr, &0);
+    client.raise_dispute(&client_addr, &0, &dispute_reason_hash(&env));
 
     let raised = last_dispute_raised_event(&env);
     assert_eq!(raised.disputed_at, 1_100);

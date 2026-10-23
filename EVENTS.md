@@ -22,6 +22,7 @@ row here, and a row here must correspond to a topic in the source.
 | `claim`    | `ClaimedEvent`                   | state change      |
 | `extend`   | `DeadlineExtendedEvent`          | state change      |
 | `dispute`  | `DisputeRaisedEvent`             | state change      |
+| `evidence` | `EvidenceSubmittedEvent`         | state change      |
 | `dispescal`| `DisputeEscalatedEvent`          | state change      |
 | `resolve`  | `DisputeResolvedEvent`           | state change      |
 | `sweep`    | `ExcessSweptEvent`               | state change      |

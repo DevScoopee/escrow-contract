@@ -7,6 +7,7 @@
 //! do, the client can reclaim the escrow with `withdraw_unaccepted` once the
 //! acceptance window has passed.
 
+use crate::test::dispute_reason_hash;
 use crate::{Error, MilestoneEscrow, MilestoneEscrowClient, MilestoneStatus};
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{symbol_short, token, vec, Address, Env, IntoVal, Val};
@@ -95,14 +96,14 @@ fn test_raise_dispute_requires_both_acceptances() {
 
     client.accept_job(&freelancer_addr);
     assert_eq!(
-        client.try_raise_dispute(&client_addr, &0u32),
+        client.try_raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env)),
         Err(Ok(Error::NotAccepted))
     );
 
     client.accept_arbiter(&arbiter_addr);
     // Disputes need delivered work (#784).
     client.mark_delivered(&freelancer_addr, &0u32);
-    client.raise_dispute(&client_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
     assert_eq!(
         client.get_job().milestones.get(0).unwrap().status,
         MilestoneStatus::Disputed

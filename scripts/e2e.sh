@@ -113,7 +113,8 @@ log "Marking milestone delivered"
 invoke freelancer mark_delivered --freelancer "${FREELANCER}" --milestone_index 0
 
 log "Raising a dispute"
-invoke client raise_dispute --caller "${CLIENT_ADDR}" --milestone_index 0
+invoke client raise_dispute --caller "${CLIENT_ADDR}" --milestone_index 0 \
+  --reason_hash 2121212121212121212121212121212121212121212121212121212121212121
 
 log "Resolving dispute as refund to client"
 invoke arbiter resolve_dispute \

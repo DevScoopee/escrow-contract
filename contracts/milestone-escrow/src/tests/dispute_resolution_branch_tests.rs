@@ -29,7 +29,7 @@ fn disputed_escrow(
     let (client_addr, freelancer_addr, arbiter_addr, _admin, token, contract_id, client) =
         setup_funded_escrow(env, vec![env, amount]);
     client.mark_delivered(&freelancer_addr, &0u32);
-    client.raise_dispute(&client_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(env));
     (
         client_addr,
         freelancer_addr,
@@ -81,7 +81,7 @@ fn raise_dispute_rejects_when_dispute_lock_is_held() {
             .set(&DataKey::DisputeLock(0u32), &true);
     });
 
-    let result = client.try_raise_dispute(&client_addr, &0u32);
+    let result = client.try_raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
     assert_eq!(result, Err(Ok(Error::DisputeAlreadyRaised)));
     assert_eq!(milestone_0(&client).status, MilestoneStatus::Pending);
 }

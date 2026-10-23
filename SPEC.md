@@ -95,8 +95,11 @@ are not required to settle the escrow.
 
 ## Dispute semantics
 
-A dispute is raised with `raise_dispute(caller, milestone_index)`. Either the
-client or the freelancer may raise it, and the caller must authorize the call.
+A dispute is raised with `raise_dispute(caller, milestone_index, reason_hash)`.
+Either the client or the freelancer may raise it, and the caller must authorize
+the call. `reason_hash` is a 32-byte commitment to the off-chain statement that
+explains the dispute; it is stored on-chain and echoed in the `dispute` event so
+arbiters can anchor the claim without trusting off-chain metadata (#712).
 Raise-able statuses and their intended meaning:
 
 | Status at raise time | Allowed? | Meaning                                                                 |
@@ -120,6 +123,13 @@ Notes:
   - `resolve_dispute(release_to_freelancer = false)` → `Refunded`
   - `apply_dispute_arbitration_split(client_refund_bps)` → `Split` (full
     refund becomes `Refunded`, full freelancer award becomes `Released`).
+- While a milestone is `Disputed`, either party may anchor evidence with
+  `submit_evidence(caller, milestone_index, evidence_hash)`. Each hash is
+  appended to the dispute record (at most `MAX_DISPUTE_EVIDENCE_ENTRIES` = 10,
+  then `EvidenceLimitReached`), timestamped, and published as an `evidence`
+  event. `get_dispute_info` returns the reason hash, `disputed_at`, the
+  pre-dispute status and every evidence entry; the record is deleted when the
+  dispute closes, so evidence never outlives the dispute it belongs to (#712).
 - If the arbiter has not acted within the escrow's dispute timeout (30 days
   by default, set with `initialize_with_dispute_timeout`), either party may
   call `escalate_dispute` to return the milestone to its pre-dispute status;
