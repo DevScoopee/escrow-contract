@@ -2048,6 +2048,16 @@ impl MilestoneEscrow {
 
     /// Contract token balance minus the credits still owed to recipients, i.e.
     /// the part of the balance that settlement paths may pay out.
+    /// Drop a milestone's persistent deadline extension once it reaches a
+    /// terminal state (#671). Checking first keeps the many milestones that
+    /// were never extended from paying for a ledger write.
+    fn clear_time_ext(env: &Env, milestone_index: u32) {
+        let key = DataKey::TimeExt(milestone_index);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().remove(&key);
+        }
+    }
+
     fn available_balance(env: &Env, token_client: &token::Client) -> i128 {
         token_client
             .balance(&env.current_contract_address())
@@ -4500,9 +4510,7 @@ impl MilestoneEscrow {
         env.storage()
             .temporary()
             .remove(&DataKey::TimeExt(milestone_index));
-        env.storage()
-            .persistent()
-            .remove(&DataKey::TimeExt(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
 
         env.events().publish(
             (symbol_short!("msrev"),),
@@ -4741,6 +4749,7 @@ impl MilestoneEscrow {
         milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Released;
         Self::store_milestone(env, milestone_index, &milestone);
+        Self::clear_time_ext(env, milestone_index);
         Self::increment_reputation(env, &meta.client);
         Self::increment_reputation(env, &meta.freelancer);
 
@@ -4908,6 +4917,7 @@ impl MilestoneEscrow {
         if updated_milestone.released_amount == updated_milestone.amount {
             updated_milestone.status = MilestoneStatus::Released;
             Self::store_milestone_released(&env, milestone_index);
+            Self::clear_time_ext(&env, milestone_index);
             Self::increment_reputation(&env, &meta.client);
             Self::increment_reputation(&env, &meta.freelancer);
         } else {
@@ -5007,6 +5017,7 @@ impl MilestoneEscrow {
 
         milestone.status = MilestoneStatus::Released;
         Self::store_milestone(&env, milestone_index, &milestone);
+        Self::clear_time_ext(&env, milestone_index);
         Self::increment_reputation(&env, &meta.client);
         Self::increment_reputation(&env, &meta.freelancer);
 
@@ -5724,6 +5735,7 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::DisputeInfo(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
 
         env.events().publish(
             (symbol_short!("resolve"),),
@@ -5974,6 +5986,7 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::DisputeInfo(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
 
         // Compact temporary signal: one u32 key + one u32 value (not a full
         // RefundAllocation, and not an Address-bearing composite key).
@@ -6344,6 +6357,7 @@ impl MilestoneEscrow {
                 // reduces the number of distinct ledger keys written by this
                 // function by one per updated milestone (issue #383).
                 Self::store_milestone(&env, index, &milestone);
+                Self::clear_time_ext(&env, index);
             }
         }
 
@@ -6452,6 +6466,7 @@ impl MilestoneEscrow {
                 milestone.released_amount = milestone.amount;
                 milestone.status = MilestoneStatus::Refunded;
                 Self::store_milestone(&env, index, &milestone);
+                Self::clear_time_ext(&env, index);
             }
         }
 
@@ -9449,6 +9464,7 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::DisputeInfo(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
         Self::store_milestone_released(&env, milestone_index);
 
         // Reset accrued yield on emergency override
@@ -9551,6 +9567,7 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::DisputeInfo(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
 
         // Reset accrued yield on emergency override — only write when the
         // stored value is non-zero to avoid an unnecessary ledger mutation.
@@ -9688,6 +9705,7 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::DisputeInfo(milestone_index));
+        Self::clear_time_ext(&env, milestone_index);
 
         env.events().publish(
             (symbol_short!("admstrm"),),
