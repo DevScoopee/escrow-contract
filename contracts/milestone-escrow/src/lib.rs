@@ -179,6 +179,9 @@ pub enum Error {
     /// arbiter == client, arbiter == freelancer, or client == freelancer —
     /// removes an independent check-and-balance and is rejected.
     InvalidParties = 44,
+    /// `add_milestone` was called on a job that already carries
+    /// `MAX_MILESTONES` milestones.
+    TooManyMilestones = 45,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -186,6 +189,11 @@ const MAX_REVISIONS: u32 = 3;
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
 const MAX_CLIENT_FEE_BPS: u32 = 5000;
 
+/// Upper bound on the number of milestones a job may carry, including
+/// milestones appended after funding by `add_milestone` (issue #737).
+/// Keeps `get_job`, `checked_job_total` and every whole-set iteration bounded
+/// so the ledger footprint of amendment endpoints stays predictable.
+const MAX_MILESTONES: u32 = 50;
 /// Seconds after funding during which the freelancer and arbiter may accept
 /// the job. Once it has passed without both acceptances, the client can
 /// reclaim the escrow with `withdraw_unaccepted`.
@@ -565,6 +573,44 @@ pub struct FundedEvent {
     pub contract_id: Address,
     pub client: Address,
     pub total_amount: i128,
+}
+
+/// Emitted by `add_milestone` when both parties consent to extending a funded
+/// escrow with a new `Pending` milestone funded by an additional client
+/// transfer (issue #737).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneAddedEvent {
+    pub contract_id: Address,
+    pub client: Address,
+    pub freelancer: Address,
+    /// Index of the newly appended milestone.
+    pub milestone_index: u32,
+    /// Amount deposited into escrow for the new milestone.
+    pub amount: i128,
+    /// Contract-level total after the addition.
+    pub total_amount: i128,
+    /// Milestone count after the addition.
+    pub milestone_count: u32,
+}
+
+/// Emitted by `reduce_milestone` when both parties consent to lowering a
+/// `Pending` milestone's amount and refunding the difference to the client
+/// (issue #737).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneReducedEvent {
+    pub contract_id: Address,
+    pub client: Address,
+    pub freelancer: Address,
+    pub milestone_index: u32,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    /// Amount refunded to the client (`old_amount - new_amount`).
+    pub refund: i128,
+    /// Contract-level total after the reduction.
+    pub total_amount: i128,
+    pub milestone_count: u32,
 }
 
 #[contracttype]
@@ -3660,6 +3706,7 @@ impl MilestoneEscrow {
         Self::assert_emergency_pause_not_locked(&env)?;
         Self::assert_time_ext_not_locked(&env)?;
         Self::assert_payment_streaming_not_locked(&env)?;
+
         Self::validate_fund_client(&env, &client)?;
         client.require_auth();
         let mut meta = Self::load_job_meta(&env)?;
@@ -3730,6 +3777,208 @@ impl MilestoneEscrow {
     pub fn get_funding_mode(env: Env) -> Result<FundingMode, Error> {
         let _ = Self::load_job_meta(&env)?;
         Ok(Self::load_funding_mode(&env))
+    }
+
+    /// Append a new `Pending` milestone to a funded escrow (issue #737).
+    ///
+    /// Real freelance work changes scope after funding; without this endpoint
+    /// the only ways to add work are cancelling the whole escrow or leaving
+    /// the new deliverable unfunded.  Both parties must sign, and the client
+    /// deposits `amount` into escrow in the same call, so the conservation
+    /// invariant `total_amount == Î£ milestone.amounts` holds across the
+    /// amendment: `total_amount` grows by exactly `amount` and the escrow
+    /// token balance grows by exactly `amount`.
+    ///
+    /// # Authorization
+    /// `client` and `freelancer` must both match the addresses stored on the
+    /// job and both authorise the call — neither party can extend scope alone.
+    ///
+    /// # Parameters
+    /// * `client`     – The job's client; pays the new milestone.
+    /// * `freelancer` – The job's freelancer; consents to the extra scope.
+    /// * `amount`     – New milestone amount, must be > 0.
+    ///
+    /// # Errors
+    /// * `Paused` / `EscrowLocked`     – Emergency pause or cancel lock is on.
+    /// * `NotInitialized`              – Contract has not been initialized.
+    /// * `Unauthorized`                – `client` / `freelancer` do not match
+    ///                                    the stored job parties.
+    /// * `NotFunded`                   – The escrow has not been funded yet;
+    ///                                    extra milestones belong in the
+    ///                                    `initialize` amount vector.
+    /// * `InvalidAmount`               – `amount` ≤ 0, or `total_amount +
+    ///                                    amount` overflows `i128`.
+    /// * `TooManyMilestones`           – The job already carries
+    ///                                    `MAX_MILESTONES` milestones.
+    pub fn add_milestone(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+
+        let mut meta = Self::load_job_meta(&env)?;
+        if client != meta.client || freelancer != meta.freelancer {
+            return Err(Error::Unauthorized);
+        }
+        client.require_auth();
+        freelancer.require_auth();
+
+        if !meta.funded {
+            return Err(Error::NotFunded);
+        }
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if meta.milestone_count >= MAX_MILESTONES {
+            return Err(Error::TooManyMilestones);
+        }
+        let new_total = meta
+            .total_amount
+            .checked_add(amount)
+            .ok_or(Error::InvalidAmount)?;
+        let new_index = meta.milestone_count;
+
+        Self::store_milestone(
+            &env,
+            new_index,
+            &Milestone {
+                amount,
+                released_amount: 0,
+                status: MilestoneStatus::Pending,
+                delivered_at: 0,
+                funded: true,
+                spec_hash: BytesN::from_array(&env, &[0u8; 32]),
+            },
+        );
+        // Persist amended state BEFORE the token transfer so a reentrant call
+        // sees the updated count/total (mirrors `fund`).
+        meta.milestone_count = new_index + 1;
+        meta.total_amount = new_total;
+        Self::store_job_meta(&env, &meta);
+
+        let token_client = token::Client::new(&env, &meta.token);
+        token_client.transfer(&client, env.current_contract_address(), &amount);
+
+        env.events().publish(
+            (symbol_short!("ms_add"),),
+            MilestoneAddedEvent {
+                contract_id: env.current_contract_address(),
+                client,
+                freelancer,
+                milestone_index: new_index,
+                amount,
+                total_amount: new_total,
+                milestone_count: meta.milestone_count,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Reduce the amount of a `Pending` milestone and refund the difference to
+    /// the client (issue #737).
+    ///
+    /// Both parties must sign.  Only `Pending` milestones can be reduced: a
+    /// `Delivered` or partially-released milestone has work behind it and its
+    /// remaining balance is already committed to a release/dispute path.  The
+    /// refund is exact, so the conservation invariant
+    /// `total_amount == Î£ milestone.amounts` holds across the amendment.
+    ///
+    /// # Parameters
+    /// * `client`          – The job's client; receives the refund.
+    /// * `freelancer`      – The job's freelancer; consents to reduced scope.
+    /// * `milestone_index` – Index of the milestone to reduce.
+    /// * `new_amount`      – Replacement amount.  Must be > 0 and strictly
+    ///                        below the milestone's current amount.
+    ///
+    /// # Errors
+    /// * `Paused` / `EscrowLocked`     – Emergency pause or cancel lock is on.
+    /// * `NotInitialized`              – Contract has not been initialized.
+    /// * `Unauthorized`                – `client` / `freelancer` do not match
+    ///                                    the stored job parties.
+    /// * `NotFunded`                   – Nothing was ever deposited to refund.
+    /// * `InvalidMilestone`            – `milestone_index` is out of range.
+    /// * `InvalidStatus`               – The milestone is not `Pending`.
+    /// * `InvalidAmount`               – `new_amount` ≤ 0, or it is not
+    ///                                    strictly below the current amount.
+    /// * `InsufficientBalance`         – The escrow holds less than the refund
+    ///                                    (defensive; unreachable while the
+    ///                                    conservation invariant holds).
+    pub fn reduce_milestone(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        milestone_index: u32,
+        new_amount: i128,
+    ) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+
+        let mut meta = Self::load_job_meta(&env)?;
+        if client != meta.client || freelancer != meta.freelancer {
+            return Err(Error::Unauthorized);
+        }
+        client.require_auth();
+        freelancer.require_auth();
+
+        if !meta.funded {
+            return Err(Error::NotFunded);
+        }
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.status != MilestoneStatus::Pending {
+            return Err(Error::InvalidStatus);
+        }
+        if new_amount <= 0 || new_amount >= milestone.amount {
+            return Err(Error::InvalidAmount);
+        }
+        let refund = milestone.amount - new_amount;
+
+        // Credits owed to parties (`TotalOwed`) are not available to refund.
+        let token_client = token::Client::new(&env, &meta.token);
+        if Self::available_balance(&env, &token_client) < refund {
+            return Err(Error::InsufficientBalance);
+        }
+
+        milestone.amount = new_amount;
+        Self::store_milestone(&env, milestone_index, &milestone);
+        // Persist amended state BEFORE the refund transfer so a reentrant
+        // call never observes the old, larger amount (mirrors `fund`).
+        meta.total_amount -= refund;
+        Self::store_job_meta(&env, &meta);
+
+        Self::pay_or_credit(&env, &token_client, &client, &refund)?;
+
+        env.events().publish(
+            (symbol_short!("ms_reduce"),),
+            MilestoneReducedEvent {
+                contract_id: env.current_contract_address(),
+                client,
+                freelancer,
+                milestone_index,
+                old_amount: new_amount + refund,
+                new_amount,
+                refund,
+                total_amount: meta.total_amount,
+                milestone_count: meta.milestone_count,
+            },
+        );
+
+        Ok(())
     }
 
     /// Accept the job as its freelancer, agreeing on-chain to the milestone
@@ -4099,11 +4348,11 @@ impl MilestoneEscrow {
     /// This function performs a bounded, constant number of storage reads and
     /// writes regardless of the total milestone count:
     ///
-    /// - 1Ã— instance read  (`DataKey::Job` â†’ `JobMeta`)
-    /// - 1Ã— temporary read (`DataKey::DeliveredAt(milestone_index)`)
-    /// - 1Ã— persistent read  (`DataKey::Milestone(milestone_index)`)
-    /// - 1Ã— persistent write (`DataKey::Milestone(milestone_index)`)
-    /// - 1Ã— token transfer
+    /// - 1× instance read  (`DataKey::Job` → `JobMeta`)
+    /// - 1× temporary read (`DataKey::DeliveredAt(milestone_index)`)
+    /// - 1× persistent read  (`DataKey::Milestone(milestone_index)`)
+    /// - 1× persistent write (`DataKey::Milestone(milestone_index)`)
+    /// - 1× token transfer
     ///
     /// No loop over all milestones is performed here.  Functions that do loop
     /// over all milestones (`checked_job_total`, `assemble_job`) are
@@ -10871,13 +11120,13 @@ impl MilestoneEscrow {
     /// # Algorithm — largest remainder (Hare quota)
     /// ```text
     /// weightedᵢ = total × weightᵢ
-    /// baseᵢ     = weightedᵢ / Σweights      (floor)
-    /// remᵢ      = weightedᵢ % Σweights      (exact fractional part, scaled)
+    /// baseáµ¢     = weightedáµ¢ / Î£weights      (floor)
+    /// remáµ¢      = weightedáµ¢ % Î£weights      (exact fractional part, scaled)
     /// residue   = total − Σbaseᵢ            (0 ≤ residue < n)
     /// ```
     /// The `residue` indivisible units are then handed out one at a time to
-    /// the parties with the largest `remᵢ`, each party receiving at most one.
-    /// This is exact rather than approximate: `remᵢ` is the true numerator of
+    /// the parties with the largest `remáµ¢`, each party receiving at most one.
+    /// This is exact rather than approximate: `remáµ¢` is the true numerator of
     /// the discarded fraction, so the units go to whoever was rounded down
     /// hardest.
     ///
@@ -10915,7 +11164,7 @@ impl MilestoneEscrow {
     ///
     /// # Validation order
     /// The total and the weight vector are fully validated *before* the first
-    /// division by `Σweights` is attempted, so a malformed vector can never
+    /// division by `Î£weights` is attempted, so a malformed vector can never
     /// reach the arithmetic and can never trap:
     /// 1. `total_amount` ≤ 0                    → `InvalidAmount`
     /// 2. `weights` empty, or over the cap      → `InvalidAllocationWeights`

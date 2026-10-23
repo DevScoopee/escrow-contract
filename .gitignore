@@ -6,3 +6,4 @@ target/
 skills-lock.json
 issue.md
 dist/
+bindings/
