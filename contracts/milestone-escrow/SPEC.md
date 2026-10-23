@@ -12,10 +12,10 @@ PRs that add, remove or change a transition must update this file (see
 
 | Actor | Set by | Notes |
 |---|---|---|
-| Admin | `initialize`, `transfer_admin`, `execute_admin_transfer` | Platform operator. Controls overrides, pauses, fees, yield, whitelist and upgrades. |
-| Client | `initialize` | Funds the job and approves milestones. |
-| Freelancer | `initialize` | Delivers milestones and receives payouts. |
-| Arbiter | `initialize` | Resolves disputed milestones. |
+| Admin | `__constructor`, `transfer_admin`, `execute_admin_transfer` | Platform operator. Controls overrides, pauses, fees, yield, whitelist and upgrades. |
+| Client | `__constructor` | Funds the job and approves milestones. |
+| Freelancer | `__constructor` | Delivers milestones and receives payouts. |
+| Arbiter | `__constructor` | Resolves disputed milestones. |
 | Multisig signer | `multisig_approval_init` | Approves proposal IDs (used by `execute_admin_transfer`). |
 | Anyone | n/a | May call read-only and calculation endpoints, and `execute_admin_transfer` once it is approved. |
 
@@ -25,7 +25,7 @@ PRs that add, remove or change a transition must update this file (see
 
 | Status | Meaning |
 |---|---|
-| `Pending` | Created by `initialize`; not yet delivered. |
+| `Pending` | Created by `__constructor`; not yet delivered. |
 | `Delivered` | Freelancer marked it delivered; the auto-release window is running. |
 | `PartiallyReleased` | Client released part of the amount with `approve_partial`. |
 | `Disputed` | Frozen for arbitration. |
@@ -37,7 +37,7 @@ PRs that add, remove or change a transition must update this file (see
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: initialize
+    [*] --> Pending: __constructor
     Pending --> Delivered: mark_delivered
     Delivered --> Released: approve_milestone, claim_auto_release, approve_partial (full)
     Delivered --> PartiallyReleased: approve_partial
@@ -73,7 +73,7 @@ states.
 stateDiagram-v2
     state "Unfunded" as Unfunded
     state "Funded" as Funded
-    [*] --> Unfunded: initialize
+    [*] --> Unfunded: __constructor
     Unfunded --> Funded: fund
 
     state "Accepted" as Accepted
@@ -102,14 +102,14 @@ stateDiagram-v2
 | Funded | `JobMeta.funded`, `DataKey::FundedAt` | `fund` | never | most settlement entry points (`NotFunded`) |
 | Acceptance | `DataKey::Acceptance` (bit 1 freelancer, bit 2 arbiter) | `accept_job`, `accept_arbiter` | never | `mark_delivered`, `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` (`NotAccepted`), `withdraw_unaccepted` |
 | Emergency pause | `DataKey::Ep` | `emergency_pause`, `emergency_pause_admin_override` | `emergency_unpause`, `emergency_pause_admin_override` | `ensure_not_paused` and the calculators listed below |
-| Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `assert_not_paused` |
-| Cancel approval | `DataKey::CancelApproval` | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party) | `cancel_escrow`, `revoke_cancel_approval` |
+| Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `ensure_not_paused`, `assert_not_paused` |
+| Cancel approval | `DataKey::CancelApproval` (`CancelApprovalRecord`: `mask` + `approved_at`) | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party), expiry after `CANCEL_APPROVAL_TTL_SECONDS` | `cancel_escrow`, `revoke_cancel_approval` |
 | Cancel lock | `DataKey::CancelLock` | `cancel_escrow` (second party) | `admin_override_cancel_release`, `admin_override_cancel_refund` | `ensure_not_paused` |
 | Multisig lock | `DataKey::MultisigLocked` | `multisig_lock` | `multisig_admin_override_release`, `multisig_admin_override_refund` | the multisig override and split endpoints |
 | Tax record | `DataKey::TaxWithholdingLock(i)` | `tax_withholding_deductions` | `admin_override_tax_release`, `admin_override_tax_refund`, `admin_override_tax_split_refund` | the tax override endpoints |
 | Owed balance | `DataKey::Owed(address)`, `DataKey::TotalOwed` | any payout whose transfer fails | `withdraw` | `withdraw`, settlement balance caps |
 
-`ensure_not_paused` rejects with `Paused` while `Ep` is set and with
+`ensure_not_paused` rejects with `Paused` while `Ep` or the admin `Paused` flag is set and with
 `EscrowLocked` while `CancelLock` is set. `assert_not_paused` rejects with
 `Paused` while the admin `Paused` flag is set.
 
@@ -132,7 +132,7 @@ topic.
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `initialize` | admin | not initialized; valid addresses; non-empty positive amounts; `auto_release_seconds > 0` | none | every milestone `Pending` | none | `init` |
+| `__constructor` | deployer | not initialized; valid addresses; non-empty positive amounts; `auto_release_seconds > 0` | none | every milestone `Pending` | none | `init` |
 | `fund` | client | `ensure_not_paused`; not funded | n/a | job `funded = true` | client → contract, total amount | `fund` |
 | `add_whitelisted_token` | admin | not funded; whitelist not full | n/a | n/a | none | `wtok` |
 | `remove_whitelisted_token` | admin | not funded; token present; not the last token | n/a | n/a | none | `wldel` |
@@ -156,17 +156,36 @@ topic.
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
 | `raise_dispute` | client or freelancer | `ensure_not_paused`; funded; no dispute lock held; accepted by both | `Pending`, `Delivered`, `PartiallyReleased` | `Disputed` | none | `dispute` |
+| `submit_evidence` | client or freelancer | `ensure_not_paused`; funded; milestone `Disputed`; fewer than `MAX_DISPUTE_EVIDENCE_ENTRIES` hashes recorded | `Disputed` | `Disputed` | none | `evidence` |
 | `resolve_dispute` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Released` (release) or `Refunded` (refund) | → freelancer or → client, remaining capped at available balance | `resolve` |
 | `apply_dispute_arbitration_split` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Refunded`, `Split` or `Released` depending on the shares | → client and → freelancer by `client_refund_bps`, capped at available balance | `resolve`, `arbsplit` |
+
+`raise_dispute` takes a 32-byte `reason_hash` and persists a `DisputeInfo`
+record holding the ledger timestamp (`disputed_at`), the status to restore on
+escalation, the `reason_hash`, and an evidence list that starts empty (#712).
+Either party can append up to `MAX_DISPUTE_EVIDENCE_ENTRIES` (10) hashes with
+`submit_evidence` while the milestone is `Disputed`; each submission emits
+`evidence` and is readable through `get_dispute_info`. Resolving, escalating or
+admin-overriding a dispute deletes the record, so the evidence trail never
+outlives the dispute it belongs to.
 
 ### Cancellation
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `cancel_escrow` | client or freelancer | not emergency paused; not cancel locked; funded; positive balance; caller has not already approved | n/a | records approval; second party sets `CancelLock` | none | `cxlappr`, or `cancel` when locked |
+| `cancel_escrow` | client or freelancer | not emergency paused; not cancel locked; funded; positive balance; caller has not already approved an unexpired round | n/a | records (or refreshes) a first approval with `approved_at`; second approval inside the TTL sets `CancelLock` | none | `cxlappr` (mask + `approved_at`), or `cancel` when locked |
 | `revoke_cancel_approval` | client or freelancer | not cancel locked; caller has approved | n/a | clears caller's approval | none | `cancelrev` |
 | `admin_override_cancel_release` | admin | `CancelLock` set; funded | every milestone except `Released`, `Refunded` | `Released`; clears `CancelLock`; resets `YieldAccrued` | → freelancer, sum of remaining | `adcovls` |
 | `admin_override_cancel_refund` | admin | `CancelLock` set; funded | every milestone except `Released`, `Refunded` | `Refunded`; clears `CancelLock` and `YieldAccrued` | → client, sum of remaining | `adcovrf` |
+
+Cancellation is a two-party handshake: one party approves, the `CancelLock` only
+fires when the other party approves too. A single-party approval is valid for
+`CANCEL_APPROVAL_TTL_SECONDS` (7 days) from `approved_at`. Once that age is
+reached the approval is treated as absent (#713): the next `cancel_escrow` call
+records a fresh first approval under the caller's bit, restarts `approved_at` at
+the current ledger timestamp, and does **not** set the lock. The stale bit is
+overwritten, so the original approver must opt in again. `cxlappr` carries
+`approved_at` so indexers can compute the same deadline off-chain.
 
 ### Admin overrides
 
@@ -262,13 +281,18 @@ change no milestone or escrow state.
    - While emergency paused (`Ep`) or cancel locked, every endpoint guarded by
      `ensure_not_paused` is rejected: `fund`, `mark_delivered`,
      `approve_partial`, `approve_milestone`, `claim_auto_release`,
-     `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` and
+     `raise_dispute`, `submit_evidence`, `resolve_dispute`,
+     `apply_dispute_arbitration_split` and
      `upgrade`. The admin override endpoints do not check `Ep`, so only the
      admin can move funds.
    - While admin paused (`Paused`), `admin_override_refund` and
      `extend_milestone_deadline` are rejected.
    - `withdraw` is not gated by any pause, so owed balances can always be
      claimed.
+7. **Stale cancel intent never locks.** A single-party cancel approval expires
+   `CANCEL_APPROVAL_TTL_SECONDS` after it was recorded. `cancel_escrow` treats an
+   expired approval as absent, so the lock can only ever be completed by two
+   approvals made within the same 7-day window.
 
 ## Read-only endpoints
 
@@ -277,4 +301,5 @@ These neither change state nor publish events: `get_job`, `get_reputation`,
 `time_until_auto_release`, `dispute_arbitration_split`, `is_emergency_paused`,
 `get_platform_fee_allocation`, `is_multisig_approved`,
 `get_pending_admin_transfer`, `is_escrow_interest_yield_locked`,
-`get_escrow_interest_yield`, `get_yield_info`, `is_multisig_locked`.
+`get_escrow_interest_yield`, `get_yield_info`, `is_multisig_locked`,
+`get_dispute_info`.

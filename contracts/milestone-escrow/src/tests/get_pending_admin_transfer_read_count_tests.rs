@@ -299,7 +299,7 @@ fn test_get_pending_admin_transfer_matches_api_lifecycle() {
 
     assert_eq!(escrow.get_pending_admin_transfer(), None);
 
-    escrow.propose_admin_transfer(&admin_addr, &new_admin, &5u32);
+    escrow.propose_admin_transfer(&admin_addr, &new_admin);
     let stored: Option<PendingAdminTransfer> = env.as_contract(&contract_id, || {
         env.storage()
             .persistent()
@@ -308,7 +308,7 @@ fn test_get_pending_admin_transfer_matches_api_lifecycle() {
     assert_eq!(escrow.get_pending_admin_transfer(), stored);
     let stored = stored.expect("proposal must be stored");
     assert_eq!(stored.new_admin, new_admin);
-    assert_eq!(stored.proposal_id, 5u32);
+    assert_eq!(stored.proposal_id, 1u32);
 
     escrow.cancel_admin_transfer_proposal(&admin_addr);
     assert_eq!(escrow.get_pending_admin_transfer(), None);

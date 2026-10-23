@@ -480,6 +480,7 @@ fn test_multisig_approval_init_registers_signer_set_and_threshold_identically() 
         escrow.try_multisig_approval_init(&admin, &signers, &2u32),
         Ok(Ok(()))
     );
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
 
     // Same signer set and same threshold as the two legacy entries held.
     assert_eq!(

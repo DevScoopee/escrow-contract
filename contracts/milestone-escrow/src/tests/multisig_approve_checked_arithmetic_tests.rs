@@ -118,14 +118,28 @@ fn overwrite_signers(env: &Env, contract_id: &Address, signers: &Vec<Address>) {
     });
 }
 
-/// The bitmap as stored for `proposal_id`, or `None` when no temporary entry
-/// exists yet.
+/// The bitmap stored in `proposal_id`'s record (issue #785), or `None` when
+/// no approval has been recorded for it yet.
 fn stored_bitmap(env: &Env, contract_id: &Address, proposal_id: u32) -> Option<u32> {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
-            .get::<_, u32>(&DataKey::MultiSigApproval(proposal_id))
+            .persistent()
+            .get::<_, crate::AdminTransferProposal>(&DataKey::AdminProposal(proposal_id))
+            .map(|record| record.approvals_bitmap)
+            .filter(|bitmap| *bitmap != 0)
     })
+}
+
+/// Make sure `proposal_id` has a pending record to approve against.
+fn ensure_proposal(env: &Env, escrow: &MilestoneEscrowClient<'_>, proposal_id: u32) {
+    let exists = env.as_contract(&escrow.address, || {
+        env.storage()
+            .persistent()
+            .has(&DataKey::AdminProposal(proposal_id))
+    });
+    if !exists {
+        crate::tests::seed_admin_proposal(env, &escrow.address, proposal_id);
+    }
 }
 
 /// Every temporary-storage entry the contract owns, for "nothing was written"
@@ -169,6 +183,7 @@ fn approve_and_count_events(
     signer: &Address,
     proposal_id: u32,
 ) -> (MultiSigApprovalState, u32) {
+    ensure_proposal(env, escrow, proposal_id);
     let state = escrow.multisig_approve(signer, &proposal_id);
     (state, msigappr_event_count(env))
 }
@@ -188,6 +203,7 @@ fn test_multisig_approve_index_at_bitmap_width_returns_arithmetic_overflow() {
     // the state directly.
     let oversized = oversized_signers(&env, signers);
     overwrite_signers(&env, &contract_id, &oversized);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
 
     let out_of_range = escrow.try_multisig_approve(&oversized.get(MAX_SIGNERS).unwrap(), &1u32);
 
@@ -205,6 +221,7 @@ fn test_multisig_approve_out_of_range_index_writes_nothing() {
     overwrite_signers(&env, &contract_id, &oversized);
 
     let before = temporary_entries(&env, &contract_id);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
 
     let out_of_range = escrow.try_multisig_approve(&oversized.get(MAX_SIGNERS).unwrap(), &1u32);
     assert_eq!(out_of_range, Err(Ok(Error::ArithmeticOverflow)));

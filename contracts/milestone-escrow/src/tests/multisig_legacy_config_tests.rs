@@ -9,7 +9,7 @@
 //! exactly that layout and check that the multisig regime keeps working and
 //! cannot be re-initialised.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error, MultiSigConfig};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{vec, Address, Env, Vec};
@@ -19,7 +19,8 @@ fn escrow_with_legacy_multisig(
     env: &Env,
 ) -> (Address, crate::MilestoneEscrowClient<'_>, Vec<Address>) {
     env.mock_all_auths();
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    let fx = EscrowFixture::new(env).funded().build();
+    let (contract_id, escrow) = (fx.contract_id, fx.escrow);
     let signers = vec![env, Address::generate(env), Address::generate(env)];
     env.as_contract(&contract_id, || {
         let storage = env.storage().instance();
@@ -33,6 +34,7 @@ fn escrow_with_legacy_multisig(
 fn legacy_layout_still_counts_approvals_to_the_threshold() {
     let env = Env::default();
     let (_, escrow, signers) = escrow_with_legacy_multisig(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 7);
 
     let first = escrow.multisig_approve(&signers.get(0).unwrap(), &7);
     assert_eq!(
@@ -59,6 +61,7 @@ fn legacy_layout_still_rejects_non_signers() {
     let (_, escrow, _) = escrow_with_legacy_multisig(&env);
 
     let outsider = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 7);
     assert_eq!(
         escrow.try_multisig_approve(&outsider, &7),
         Err(Ok(Error::Unauthorized))

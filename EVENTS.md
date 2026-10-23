@@ -5,6 +5,24 @@ All events emitted by the `milestone-escrow` contract, keyed by their
 `event_docs_sync_tests` module — a topic cannot be added to `lib.rs` without a
 row here, and a row here must correspond to a topic in the source.
 
+## Indexed topics
+
+`topic[0]` is always the event name below. These events also carry party
+addresses as further topics, so RPC `getEvents` can filter by participant
+(issue #739):
+
+| Event      | Topics after the name                 |
+| ---------- | ------------------------------------- |
+| `init`     | `client`, `freelancer`, `arbiter`     |
+| `fund`     | `client`, `freelancer`, `arbiter`     |
+| `deliver`  | `freelancer`                          |
+| `claim`    | `freelancer`                          |
+| `approve`  | `client`                              |
+| `dispute`  | `caller`                              |
+| `freerot`  | `new_freelancer`                      |
+
+## Events
+
 | Topic      | Event struct                     | Kind              |
 | ---------- | -------------------------------- | ----------------- |
 | `init`     | `InitializedEvent`               | state change      |
@@ -13,13 +31,17 @@ row here, and a row here must correspond to a topic in the source.
 | `acceptarb`| `JobAcceptedEvent`               | state change      |
 | `unaccref` | `UnacceptedWithdrawnEvent`       | state change      |
 | `withdraw` | `WithdrawnEvent`                 | state change      |
+| `freerot`  | `FreelancerRotatedEvent`         | state change      |
 | `msfund`   | `MilestoneFundedEvent`           | state change      |
+| `ms_add`   | `MilestoneAddedEvent`            | state change      |
+| `ms_reduce`| `MilestoneReducedEvent`          | state change      |
 | `deliver`  | `DeliveredEvent`                 | state change      |
 | `msrev`    | `RevisionRequestedEvent`         | state change      |
 | `approve`  | `ApprovedEvent`                  | state change      |
 | `claim`    | `ClaimedEvent`                   | state change      |
 | `extend`   | `DeadlineExtendedEvent`          | state change      |
 | `dispute`  | `DisputeRaisedEvent`             | state change      |
+| `evidence` | `EvidenceSubmittedEvent`         | state change      |
 | `dispescal`| `DisputeEscalatedEvent`          | state change      |
 | `resolve`  | `DisputeResolvedEvent`           | state change      |
 | `sweep`    | `ExcessSweptEvent`               | state change      |
@@ -69,6 +91,8 @@ row here, and a row here must correspond to a topic in the source.
 | `m_ext`    | `MilestoneTimeExtensionEvent`    | state change      |
 | `m_extcns` | `TimeExtConsentEvent`            | state change      |
 | `taxwith`  | `TaxWithholdingAppliedEvent`     | state change      |
+| `taxrcpt`  | `TaxRecipientSetEvent`           | state change      |
+| `taxpaid`  | `TaxPaidEvent`                   | state change      |
 | `taxwh`    | `TaxWithholdingDeductionsEvent`  | calculation       |
 | `twspltref`| `TaxWithholdingSplitRefundEvent` | calculation       |
 | `splitref` | `SplitRefundCalculatedEvent`     | calculation       |
@@ -85,3 +109,9 @@ row here, and a row here must correspond to a topic in the source.
 - Several split-refund paths share the `SplitRefundCalculatedEvent` struct but
   use distinct topics (`arbsplit`, `epspltref`, `iyspltref`, `splitref`) so
   consumers can tell the originating workflow apart.
+- **Cancel approvals expire.** `cxlappr` carries `approved_at`, the ledger
+  timestamp at which the approval round started. An approval older than
+  `CANCEL_APPROVAL_TTL_SECONDS` (7 days) is treated as absent by
+  `cancel_escrow`, so `cancel` only ever follows two approvals recorded within
+  the same 7-day window — a stale `cxlappr` without a matching `cancel` should
+  be treated as lapsed.

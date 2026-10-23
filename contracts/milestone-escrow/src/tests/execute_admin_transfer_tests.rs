@@ -72,7 +72,7 @@ fn setup_multisig_transfer(
     client.multisig_approval_init(&admin_addr, &signers, &2u32);
 
     // Propose the transfer (proposal_id = 1).
-    client.propose_admin_transfer(&admin_addr, &new_admin, &1u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     (admin_addr, s1, s2, new_admin, contract_id, client)
 }
@@ -126,6 +126,7 @@ fn execute_transfer_rejects_when_threshold_not_met() {
     let (_, s1, _, new_admin, contract_id, client) = setup_multisig_transfer(&env);
 
     // Only one signer has approved — threshold is 2.
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
     client.multisig_approve(&s1, &1u32);
 
     assert_eq!(
@@ -154,6 +155,7 @@ fn execute_transfer_swaps_admin_and_emits_event() {
     let (old_admin, s1, s2, new_admin, contract_id, client) = setup_multisig_transfer(&env);
 
     // Approve from both signers to reach the threshold.
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
     client.multisig_approve(&s1, &1u32);
     client.multisig_approve(&s2, &1u32);
 
@@ -194,7 +196,7 @@ fn execute_transfer_skips_redundant_admin_write_for_legacy_same_admin_proposal()
 
     // `propose_admin_transfer` now refuses the current admin (issue #771) ...
     assert_eq!(
-        client.try_propose_admin_transfer(&old_admin, &old_admin, &2u32),
+        client.try_propose_admin_transfer(&old_admin, &old_admin),
         Err(Ok(Error::InvalidAddress))
     );
 
@@ -207,6 +209,16 @@ fn execute_transfer_skips_redundant_admin_write_for_legacy_same_admin_proposal()
             &crate::PendingAdminTransfer {
                 new_admin: old_admin.clone(),
                 proposal_id: 2,
+            },
+        );
+        env.storage().persistent().set(
+            &DataKey::AdminProposal(2),
+            &crate::AdminTransferProposal {
+                proposal_id: 2,
+                new_admin: old_admin.clone(),
+                created_at: env.ledger().timestamp(),
+                status: crate::AdminProposalStatus::Pending,
+                approvals_bitmap: 0,
             },
         );
     });
@@ -236,7 +248,7 @@ fn new_admin_can_propose_after_transfer_old_admin_cannot() {
     let _signers2 = vec![&env, another.clone()];
     // Old admin cannot initialize multisig (requires being admin — which fails).
     // New admin can propose a second transfer.
-    let result = client.try_propose_admin_transfer(&new_admin, &another, &2u32);
+    let result = client.try_propose_admin_transfer(&new_admin, &another);
     assert!(result.is_ok());
 
     // Pending transfer exists for proposal 2.
@@ -289,6 +301,7 @@ fn execute_transfer_updates_instance_admin_used_by_instance_gated_endpoints() {
     env.mock_all_auths();
 
     let (old_admin, s1, s2, new_admin, contract_id, client) = setup_multisig_transfer(&env);
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
     client.multisig_approve(&s1, &1u32);
     client.multisig_approve(&s2, &1u32);
     client.execute_admin_transfer();

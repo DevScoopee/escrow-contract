@@ -529,11 +529,15 @@ fn try_approve(
     }
 }
 
+/// The approvals recorded on `proposal_id`'s record (issue #785), or `None`
+/// when none have been recorded.
 fn approval_bitmap(env: &Env, contract_id: &Address, proposal_id: u32) -> Option<u32> {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
+            .persistent()
+            .get::<_, crate::AdminTransferProposal>(&DataKey::AdminProposal(proposal_id))
+            .map(|record| record.approvals_bitmap)
+            .filter(|bitmap| *bitmap != 0)
     })
 }
 
@@ -582,15 +586,30 @@ fn approve_rejects_non_signer() {
 }
 
 #[test]
-fn approve_rejects_empty_balance() {
+fn approve_accepts_empty_balance() {
+    // Issue #787: recording an approval moves no tokens, so an unfunded
+    // escrow is a valid place to collect signatures.
     let env = test_env();
     let ctx = setup(&env, false);
+    let signer = Address::generate(&env);
+    init_signers(&env, &ctx, &vec![&env, signer.clone()], 1);
+    crate::tests::seed_admin_proposal(&env, &ctx.contract_id, 7);
+
+    assert!(try_approve(&env, &ctx, &signer, 7).is_ok());
+    assert_eq!(approval_bitmap(&env, &ctx.contract_id, 7), Some(1));
+}
+
+#[test]
+fn approve_rejects_unknown_proposal() {
+    // Issue #785: an ID the contract never assigned has no record to approve.
+    let env = test_env();
+    let ctx = setup(&env, true);
     let signer = Address::generate(&env);
     init_signers(&env, &ctx, &vec![&env, signer.clone()], 1);
 
     assert_eq!(
         try_approve(&env, &ctx, &signer, 7).err(),
-        Some(Error::MultiSigEmptyBalance)
+        Some(Error::NoPendingAdminTransfer)
     );
     assert_eq!(approval_bitmap(&env, &ctx.contract_id, 7), None);
 }
@@ -613,6 +632,7 @@ fn approve_rejects_signer_past_bitmap_width() {
             &MultiSigConfig(signers.clone(), 1),
         );
     });
+    crate::tests::seed_admin_proposal(&env, &ctx.contract_id, 7);
 
     assert_eq!(
         try_approve(&env, &ctx, &last, 7).err(),

@@ -17,9 +17,11 @@ macro_rules! withholding_auth {
 
 fn setup_withholding_case(env: &Env) -> (Address, Address, Address, MilestoneEscrowClient<'_>) {
     env.mock_all_auths();
-    let amounts = vec![env, 1_000_i128];
-    let (client, freelancer, _, _, _, _, escrow) = setup_funded_escrow(env, amounts);
-    (client, freelancer, escrow.address.clone(), escrow)
+    let fx = crate::testutils::EscrowFixture::new(env).funded().build();
+    // Withholding a non-zero tax requires a recipient (#788).
+    fx.escrow
+        .set_tax_recipient(&fx.admin, &Address::generate(env));
+    (fx.client, fx.freelancer, fx.contract_id, fx.escrow)
 }
 
 #[test]
@@ -84,7 +86,7 @@ fn tax_withholding_rejects_disputed_milestone() {
     let (client_addr, freelancer_addr, _contract_id, escrow) = setup_withholding_case(&env);
 
     escrow.mark_delivered(&freelancer_addr, &0u32);
-    escrow.raise_dispute(&client_addr, &0u32);
+    escrow.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     let result = escrow.try_tax_withholding_deductions(&0u32, &500u32);
     assert_eq!(result, Err(Ok(Error::InvalidStatus)));

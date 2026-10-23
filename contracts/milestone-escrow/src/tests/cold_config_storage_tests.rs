@@ -293,6 +293,7 @@ fn migrate_folds_the_pre_456_multisig_keys() {
         &contract_id,
         &DataKey::MultiSigThreshold
     ));
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
 
     let state = escrow.multisig_approve(&signers.get(0).unwrap(), &1);
     assert_eq!((state.approvals, state.threshold), (1, 2));

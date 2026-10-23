@@ -3,7 +3,7 @@
 extern crate std;
 use std::println;
 
-use crate::{MilestoneEscrow, MilestoneEscrowClient};
+use crate::{test::dispute_reason_hash, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::{
     testutils::{Address as _, EnvTestConfig, Ledger as _},
     token, vec, Address, Env,
@@ -17,8 +17,8 @@ struct Fixture<'a> {
     client_addr: Address,
     freelancer_addr: Address,
     arbiter_addr: Address,
-    admin_addr: Address,
-    token_contract_id: Address,
+    _admin_addr: Address,
+    _token_contract_id: Address,
     escrow: MilestoneEscrowClient<'a>,
 }
 
@@ -41,14 +41,20 @@ struct Cost {
 /// a reason in the PR. Last re-baselined after the dispute timeout (#784),
 /// per-milestone funding (#766) and job acceptance (#757) checks landed, and
 /// write bytes again once milestones carry their 32-byte spec hash (#767);
-/// no flow gained a ledger write.
-const BUDGETS: [(&str, i64, u32, u32); 7] = [
-    ("initialize", 235_000, 6, 1_755),
+/// no flow gained a ledger write. Re-baselined for the dispute `reason_hash`
+/// and the evidence trail (#712): `raise_dispute` writes 13 more bytes (the
+/// hash plus an empty evidence list) and `submit_evidence` is measured for
+/// the first time. Re-baselined again after constructor deployment (#665),
+/// which includes the contract instance ledger entry alongside
+/// initialization.
+const BUDGETS: [(&str, i64, u32, u32); 8] = [
+    ("initialize", 235_000, 7, 1_850),
     ("fund", 362_000, 4, 1_470),
     ("mark_delivered", 192_000, 3, 590),
     ("approve_milestone", 448_000, 7, 1_380),
     ("claim_auto_release", 471_000, 6, 1_255),
-    ("raise_dispute", 274_000, 5, 795),
+    ("raise_dispute", 274_000, 5, 890),
+    ("submit_evidence", 201_000, 2, 580),
     ("resolve_dispute", 510_000, 7, 1_255),
 ];
 
@@ -62,31 +68,32 @@ fn fixture(env: &Env) -> Fixture<'_> {
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
     token::StellarAssetClient::new(env, &token_contract_id).mint(&client_addr, &MILESTONE_AMOUNT);
+    let amounts = vec![env, MILESTONE_AMOUNT];
+    let spec_hashes = crate::spec_hashes_for(&amounts);
     let contract_id = env.register(MilestoneEscrow, ());
     let escrow = MilestoneEscrowClient::new(env, &contract_id);
+    escrow.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &AUTO_RELEASE_SECONDS,
+        &amounts,
+        &spec_hashes,
+    );
 
     Fixture {
         client_addr,
         freelancer_addr,
         arbiter_addr,
-        admin_addr,
-        token_contract_id,
+        _admin_addr: admin_addr,
+        _token_contract_id: token_contract_id,
         escrow,
     }
 }
 
-fn initialize(fixture: &Fixture<'_>, env: &Env) {
-    fixture.escrow.initialize(
-        &fixture.admin_addr,
-        &fixture.client_addr,
-        &fixture.freelancer_addr,
-        &fixture.arbiter_addr,
-        &fixture.token_contract_id,
-        &AUTO_RELEASE_SECONDS,
-        &vec![env, MILESTONE_AMOUNT],
-        &crate::spec_hashes_for(&vec![env, MILESTONE_AMOUNT]),
-    );
-}
+fn initialize(_fixture: &Fixture<'_>, _env: &Env) {}
 
 fn fund(fixture: &Fixture<'_>) {
     // Delivery and disputes require both acceptances (#757); they are separate
@@ -161,7 +168,9 @@ fn main_entrypoint_cost_baselines() {
     initialize(&setup, &env);
     fund(&setup);
     setup.escrow.mark_delivered(&setup.freelancer_addr, &0);
-    setup.escrow.raise_dispute(&setup.client_addr, &0);
+    setup
+        .escrow
+        .raise_dispute(&setup.client_addr, &0, &dispute_reason_hash(&env));
     let raise_dispute_cost = measure("raise_dispute", &env);
 
     let env = new_env();
@@ -169,7 +178,22 @@ fn main_entrypoint_cost_baselines() {
     initialize(&setup, &env);
     fund(&setup);
     setup.escrow.mark_delivered(&setup.freelancer_addr, &0);
-    setup.escrow.raise_dispute(&setup.client_addr, &0);
+    setup
+        .escrow
+        .raise_dispute(&setup.client_addr, &0, &dispute_reason_hash(&env));
+    setup
+        .escrow
+        .submit_evidence(&setup.client_addr, &0, &dispute_reason_hash(&env));
+    let submit_evidence_cost = measure("submit_evidence", &env);
+
+    let env = new_env();
+    let setup = fixture(&env);
+    initialize(&setup, &env);
+    fund(&setup);
+    setup.escrow.mark_delivered(&setup.freelancer_addr, &0);
+    setup
+        .escrow
+        .raise_dispute(&setup.client_addr, &0, &dispute_reason_hash(&env));
     setup.escrow.resolve_dispute(&setup.arbiter_addr, &0, &true);
     let resolve_dispute_cost = measure("resolve_dispute", &env);
 
@@ -180,6 +204,7 @@ fn main_entrypoint_cost_baselines() {
         approve_milestone_cost,
         claim_auto_release_cost,
         raise_dispute_cost,
+        submit_evidence_cost,
         resolve_dispute_cost,
     ];
 
