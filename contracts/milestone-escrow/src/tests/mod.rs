@@ -25,6 +25,7 @@ mod cancel_escrow_split_refund_guards_tests;
 mod cancel_escrow_test;
 mod cold_config_storage_tests;
 mod cost_tests;
+mod dispute_resolution_branch_tests;
 mod dispute_timeout_tests;
 mod emergency_pause_admin_override_tests;
 mod emergency_pause_allocation_guards_tests;
@@ -91,6 +92,7 @@ pub(crate) mod testutils;
 mod time_until_auto_release_tests;
 mod trigger_auto_release_tests;
 mod unlock_escrow_interest_yield_event_tests;
+mod upgrade_wasm_tests;
 mod version_tests;
 mod whitelist_management_error_paths_tests;
 
