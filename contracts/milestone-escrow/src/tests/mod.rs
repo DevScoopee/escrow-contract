@@ -51,6 +51,7 @@ mod lock_escrow_interest_yield_guards_tests;
 #[path = "../milestone_amendment_tests.rs"]
 mod milestone_amendment_tests;
 mod milestone_spec_hash_tests;
+mod milestone_time_extensions_tests;
 mod multisig_admin_override_refund_tests;
 mod multisig_approval_init_event_tests;
 mod multisig_approval_init_footprint_tests;
