@@ -169,7 +169,10 @@ fn test_cancel_escrow_not_funded() {
 
 fn cancel_approval_mask(env: &Env, contract_id: &Address) -> Option<u32> {
     env.as_contract(contract_id, || {
-        env.storage().instance().get(&DataKey::CancelApproval)
+        env.storage()
+            .instance()
+            .get::<_, crate::CancelApprovalRecord>(&DataKey::CancelApproval)
+            .map(|record| record.mask)
     })
 }
 

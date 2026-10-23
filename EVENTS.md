@@ -90,3 +90,9 @@ row here, and a row here must correspond to a topic in the source.
 - Several split-refund paths share the `SplitRefundCalculatedEvent` struct but
   use distinct topics (`arbsplit`, `epspltref`, `iyspltref`, `splitref`) so
   consumers can tell the originating workflow apart.
+- **Cancel approvals expire.** `cxlappr` carries `approved_at`, the ledger
+  timestamp at which the approval round started. An approval older than
+  `CANCEL_APPROVAL_TTL_SECONDS` (7 days) is treated as absent by
+  `cancel_escrow`, so `cancel` only ever follows two approvals recorded within
+  the same 7-day window — a stale `cxlappr` without a matching `cancel` should
+  be treated as lapsed.
