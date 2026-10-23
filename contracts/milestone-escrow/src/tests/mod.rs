@@ -42,10 +42,13 @@ mod emergency_pause_allocation_guards_tests;
 mod emergency_pause_split_refund_tests;
 mod emergency_pause_test;
 mod event_docs_sync_tests;
+mod event_topic_tests;
 mod execute_admin_transfer_tests;
+mod freelancer_rotation_tests;
 mod funding_mode_tests;
 mod get_escrow_interest_yield_no_mutation_tests;
 mod get_job_no_mutation_tests;
+mod get_milestone_no_mutation_tests;
 mod get_pending_admin_transfer_read_count_tests;
 mod get_pending_admin_transfer_tests;
 mod get_platform_fee_allocation_not_initialized_tests;
@@ -1713,7 +1716,7 @@ fn test_fund_emits_structured_event() {
         if let Some(topic) = event.1.get(0) {
             if topic.get_payload() == fund_topic_val.get_payload() {
                 fund_events += 1;
-                assert_eq!(event.1.len(), 1);
+                assert_eq!(event.1.len(), 4); // topic name + client, freelancer, arbiter (#739)
                 assert_eq!(
                     FundedEvent::from_val(&env, &event.2),
                     FundedEvent {
