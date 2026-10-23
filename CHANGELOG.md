@@ -35,6 +35,19 @@ hash for every commit in the `reproducible-wasm` job summary.
 - Reproducible WASM builds: `scripts/build-reproducible.sh`, the pinned
   `build/reproducible.Dockerfile`, a CI job that publishes the hash per commit,
   and `deployments/testnet.json` (#773).
+- `add_milestone(client, freelancer, amount)` and
+  `reduce_milestone(client, freelancer, milestone_index, new_amount)`: amend a
+  funded job with both parties' consent. `add_milestone` deposits the new
+  milestone's amount from the client in the same call and is capped at
+  `MAX_MILESTONES` (50, new `TooManyMilestones` error); `reduce_milestone`
+  only applies to `Pending` milestones and refunds the difference to the
+  client. Both emit `ms_add` / `ms_reduce` events and preserve the
+  conservation invariant `balance == total_amount == Σ milestone amounts`
+  (#737).
+- TypeScript bindings generated from the built wasm in CI for every main
+  build (artifact) and published as the versioned GitHub Package
+  `@goldii-locks/milestone-escrow-bindings` on `v*` tags; consumption guide in
+  `docs/typescript-bindings.md` (#744).
 
 ## Testnet deployment `CDD5WKK3…4MUH`
 

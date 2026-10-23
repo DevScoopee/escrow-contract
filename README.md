@@ -32,6 +32,8 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 | `get_arbiter_fee_bps` | Anyone | Read the arbiter fee (0 when none) |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
 | `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
+| `add_milestone` | Client + Freelancer | Append a new Pending milestone to a funded job; the client deposits its amount in the same call (capped at `MAX_MILESTONES` = 50) |
+| `reduce_milestone` | Client + Freelancer | Lower a Pending milestone's amount and refund the difference to the client |
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
 | `request_revision` | Client | Return a delivered milestone to Pending (max 3) |
 | `approve_milestone` | Client | Release funds for a delivered milestone |
@@ -86,6 +88,14 @@ and writes `dist/milestone_escrow.wasm`, its SHA-256 and `dist/build-info.json`.
 The same commit gives the same hash on any machine. CI runs the same script on
 every commit and publishes the hash in the job summary and the wasm as an
 artifact.
+
+### TypeScript bindings
+
+CI also generates typed TypeScript bindings from the built wasm on every main
+build (artifact `milestone-escrow-bindings-ts-<sha>`) and publishes them as the
+versioned GitHub Package `@goldii-locks/milestone-escrow-bindings` on `v*`
+tags, so clients stop hand-encoding ScVals. See
+[docs/typescript-bindings.md](docs/typescript-bindings.md).
 
 ## Test
 
