@@ -8,27 +8,24 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 
 ## Trust Model
 
-The escrow's protection depends on **four distinct roles** assigned at `initialize` time:
+The escrow's protection depends on **four distinct roles** assigned at deploy time via `__constructor`:
 
 - **Admin** — the platform operator. Holds admin-only endpoints (whitelist management, pause/resume, admin overrides, upgrades). The admin is expected to be a neutral platform address, not the client or freelancer.
 - **Client** — funds the job and approves milestone releases.
 - **Freelancer** — delivers milestones and receives payouts.
 - **Arbiter** — a neutral third party that resolves disputes via `resolve_dispute` and `apply_dispute_arbitration_split`.
 
-`initialize` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
+`__constructor` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
 ## Arbiter Fee
 
-`initialize_with_arbiter_fee` takes an `arbiter_fee_bps` (basis points, max 1,000 = 10 %). When an escrow has a fee, `resolve_dispute` and `apply_dispute_arbitration_split` first pay that share of the disputed milestone's remaining balance to the arbiter, then pay or split the rest between client and freelancer. The fee is fixed at construction. Escrows created with `initialize` have no fee, and milestones that never go to dispute never pay one (#738).
+The constructor's `settings.arbiter_fee_bps` sets an arbiter fee (basis points, max 1,000 = 10 %). When an escrow has a fee, `resolve_dispute` and `apply_dispute_arbitration_split` first pay that share of the disputed milestone's remaining balance to the arbiter, then pay or split the rest between client and freelancer. The fee is fixed at construction; `0` means no fee, and milestones that never go to dispute never pay one (#738).
 
 ## Contract Functions
 
 | Function | Caller | Description |
 |---|---|---|
-| `initialize` | Anyone | Set up job with milestone amounts and spec hashes, a 30-day dispute timeout and Upfront funding |
-| `initialize_with_dispute_timeout` | Anyone | Set up job with a custom, non-zero dispute timeout |
-| `initialize_with_funding_mode` | Anyone | Set up job with Upfront or PerMilestone funding |
-| `initialize_with_arbiter_fee` | Anyone | Set up job with an arbiter fee on dispute resolution (max 1,000 bps) |
+| `__constructor` | Deployer | Atomically initializes the job with milestone amounts, spec hashes and `settings` (`EscrowSettings`: funding mode, dispute timeout, arbiter fee) |
 | `get_arbiter_fee_bps` | Anyone | Read the arbiter fee (0 when none) |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
 | `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
@@ -115,7 +112,7 @@ cargo test -p milestone-escrow
 - Includes milestone delivery, approval, dispute, and arbitration flows
 - Initialize now rejects empty milestone lists, zero/negative amounts, zero addresses, zero auto-release windows, and **party collisions** (`admin == client`, `admin == freelancer`, `arbiter == client`, `arbiter == freelancer`, `client == freelancer`) with explicit contract errors
 - `raise_dispute` now performs zero-address check, `require_auth`, and identity validation **before** writing the re-entrancy lock (issue #566), matching the authorization pattern used by `fund`, `approve_milestone`, and `resolve_dispute`; includes the five precondition guard assertions present in all other mutating functions
-- Disputes may only be raised on delivered or partially released milestones. The default dispute timeout is 30 days; `initialize_with_dispute_timeout` allows a custom non-zero timeout. If neither party gets an arbitration decision by that deadline, either party may call `escalate_dispute` to return the milestone to its pre-dispute status; a restored delivered milestone gets a fresh auto-release window
+- Disputes may only be raised on delivered or partially released milestones. The dispute timeout is set by the constructor's `settings.dispute_timeout_seconds` (non-zero; 30 days is the usual value). If neither party gets an arbitration decision by that deadline, either party may call `escalate_dispute` to return the milestone to its pre-dispute status; a restored delivered milestone gets a fresh auto-release window
 - `cancel_escrow` is a two-party handshake and a single-party approval now expires after `CANCEL_APPROVAL_TTL_SECONDS` (7 days, issue #713): an approval older than that is treated as absent, so the counter-party's call records a fresh first approval instead of locking the escrow. `CancelApprovalRecordedEvent` (`cxlappr`) carries `approved_at` so indexers can track the same window
 - `lock_escrow_interest_yield` now rejects unauthorized callers with `Unauthorized` and an illegal source state with `InvalidStatus` **before** it reads or writes the ledger entry (issue #464); authorization runs first via `require_admin_from_instance`, so a non-admin cannot probe whether an escrow is locked, and an already-locked configuration is refused rather than silently re-locked
 - Contract tests and snapshots are provided under `contracts/milestone-escrow/test_snapshots`
@@ -127,7 +124,16 @@ scripts/build-reproducible.sh
 stellar contract deploy \
   --wasm dist/milestone_escrow.wasm \
   --network testnet \
-  --source <your-account>
+  --source <your-account> \
+  -- \
+  --admin <admin-address> \
+  --client <client-address> \
+  --freelancer <freelancer-address> \
+  --arbiter <arbiter-address> \
+  --token <token-address> \
+  --auto_release_seconds 604800 \
+  --milestone_amounts '["1000000"]' \
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
 ```
 
 Then record the contract ID, `source_commit` and `wasm_sha256` from

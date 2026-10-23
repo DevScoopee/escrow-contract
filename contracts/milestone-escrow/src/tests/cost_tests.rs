@@ -17,8 +17,8 @@ struct Fixture<'a> {
     client_addr: Address,
     freelancer_addr: Address,
     arbiter_addr: Address,
-    admin_addr: Address,
-    token_contract_id: Address,
+    _admin_addr: Address,
+    _token_contract_id: Address,
     escrow: MilestoneEscrowClient<'a>,
 }
 
@@ -41,12 +41,14 @@ struct Cost {
 /// a reason in the PR. Last re-baselined after the dispute timeout (#784),
 /// per-milestone funding (#766) and job acceptance (#757) checks landed, and
 /// write bytes again once milestones carry their 32-byte spec hash (#767);
-/// no flow gained a ledger write. Re-baselined once more for the dispute
-/// `reason_hash` and the evidence trail (#712): `raise_dispute` writes 13 more
-/// bytes (the hash plus an empty evidence list) and `submit_evidence` is
-/// measured for the first time.
+/// no flow gained a ledger write. Re-baselined for the dispute `reason_hash`
+/// and the evidence trail (#712): `raise_dispute` writes 13 more bytes (the
+/// hash plus an empty evidence list) and `submit_evidence` is measured for
+/// the first time. Re-baselined again after constructor deployment (#665),
+/// which includes the contract instance ledger entry alongside
+/// initialization.
 const BUDGETS: [(&str, i64, u32, u32); 8] = [
-    ("initialize", 235_000, 6, 1_755),
+    ("initialize", 235_000, 7, 1_850),
     ("fund", 362_000, 4, 1_470),
     ("mark_delivered", 192_000, 3, 590),
     ("approve_milestone", 448_000, 7, 1_380),
@@ -66,31 +68,32 @@ fn fixture(env: &Env) -> Fixture<'_> {
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
     token::StellarAssetClient::new(env, &token_contract_id).mint(&client_addr, &MILESTONE_AMOUNT);
+    let amounts = vec![env, MILESTONE_AMOUNT];
+    let spec_hashes = crate::spec_hashes_for(&amounts);
     let contract_id = env.register(MilestoneEscrow, ());
     let escrow = MilestoneEscrowClient::new(env, &contract_id);
+    escrow.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &AUTO_RELEASE_SECONDS,
+        &amounts,
+        &spec_hashes,
+    );
 
     Fixture {
         client_addr,
         freelancer_addr,
         arbiter_addr,
-        admin_addr,
-        token_contract_id,
+        _admin_addr: admin_addr,
+        _token_contract_id: token_contract_id,
         escrow,
     }
 }
 
-fn initialize(fixture: &Fixture<'_>, env: &Env) {
-    fixture.escrow.initialize(
-        &fixture.admin_addr,
-        &fixture.client_addr,
-        &fixture.freelancer_addr,
-        &fixture.arbiter_addr,
-        &fixture.token_contract_id,
-        &AUTO_RELEASE_SECONDS,
-        &vec![env, MILESTONE_AMOUNT],
-        &crate::spec_hashes_for(&vec![env, MILESTONE_AMOUNT]),
-    );
-}
+fn initialize(_fixture: &Fixture<'_>, _env: &Env) {}
 
 fn fund(fixture: &Fixture<'_>) {
     // Delivery and disputes require both acceptances (#757); they are separate

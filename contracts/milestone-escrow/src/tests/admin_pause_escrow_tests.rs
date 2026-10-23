@@ -39,10 +39,11 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address) {
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
 
+    let amounts = vec![env, 1_000_i128];
+    let spec_hashes = crate::test_spec_hashes(env, &amounts);
+
     let contract_id = env.register(MilestoneEscrow, ());
     let escrow = MilestoneEscrowClient::new(env, &contract_id);
-
-    let amounts = vec![env, 1_000_i128];
     escrow.initialize(
         &admin_addr,
         &client_addr,
@@ -51,7 +52,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address) {
         &token_contract_id,
         &604_800u64,
         &amounts,
-        &crate::test_spec_hashes(env, &amounts),
+        &spec_hashes,
     );
 
     (escrow, admin_addr)
@@ -210,4 +211,276 @@ fn pause_touches_minimal_storage_footprint() {
     assert_eq!(client.try_admin_pause_escrow(&admin), Ok(Ok(())));
     assert!(is_paused(&env, &contract_id));
     assert!(!is_lock_held(&env, &contract_id));
+}
+
+struct PauseTestFixture<'a> {
+    env: Env,
+    escrow: MilestoneEscrowClient<'a>,
+    admin: Address,
+    client: Address,
+    freelancer: Address,
+    arbiter: Address,
+    token_id: Address,
+}
+
+fn pause_test_fixture(env: &Env) -> PauseTestFixture<'_> {
+    env.mock_all_auths();
+
+    let admin = Address::generate(env);
+    let client = Address::generate(env);
+    let freelancer = Address::generate(env);
+    let arbiter = Address::generate(env);
+
+    let token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+
+    let amounts = vec![env, 1_000_i128];
+    let spec_hashes = crate::test_spec_hashes(env, &amounts);
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let escrow = MilestoneEscrowClient::new(env, &contract_id);
+    escrow.initialize(
+        &admin,
+        &client,
+        &freelancer,
+        &arbiter,
+        &token_id,
+        &604_800u64,
+        &amounts,
+        &spec_hashes,
+    );
+
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(env, &token_id);
+    token_admin.mint(&client, &100_000_i128);
+
+    escrow.accept_job(&freelancer);
+    escrow.accept_arbiter(&arbiter);
+
+    PauseTestFixture {
+        env: env.clone(),
+        escrow,
+        admin,
+        client,
+        freelancer,
+        arbiter,
+        token_id,
+    }
+}
+
+#[test]
+fn admin_pause_escrow_blocks_fund_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let client_before = token_client.balance(&f.client);
+    let contract_before = token_client.balance(&f.escrow.address);
+
+    assert_eq!(f.escrow.try_fund(&f.client), Err(Ok(Error::Paused)));
+
+    assert_eq!(token_client.balance(&f.client), client_before);
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(f.escrow.try_fund(&f.client), Ok(Ok(())));
+    assert_eq!(token_client.balance(&f.escrow.address), 1_000_i128);
+}
+
+#[test]
+fn admin_pause_escrow_blocks_mark_delivered_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    f.escrow.fund(&f.client);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    assert_eq!(
+        f.escrow.try_mark_delivered(&f.freelancer, &0),
+        Err(Ok(Error::Paused))
+    );
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(f.escrow.try_mark_delivered(&f.freelancer, &0), Ok(Ok(())));
+}
+
+#[test]
+fn admin_pause_escrow_blocks_approve_partial_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let contract_before = token_client.balance(&f.escrow.address);
+    let freelancer_before = token_client.balance(&f.freelancer);
+
+    assert_eq!(
+        f.escrow.try_approve_partial(&f.client, &0, &300),
+        Err(Ok(Error::Paused))
+    );
+
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+    assert_eq!(token_client.balance(&f.freelancer), freelancer_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(
+        f.escrow.try_approve_partial(&f.client, &0, &300),
+        Ok(Ok(()))
+    );
+    assert_eq!(token_client.balance(&f.freelancer), 300_i128);
+}
+
+#[test]
+fn admin_pause_escrow_blocks_approve_milestone_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let contract_before = token_client.balance(&f.escrow.address);
+    let freelancer_before = token_client.balance(&f.freelancer);
+
+    assert_eq!(
+        f.escrow.try_approve_milestone(&f.client, &0),
+        Err(Ok(Error::Paused))
+    );
+
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+    assert_eq!(token_client.balance(&f.freelancer), freelancer_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(f.escrow.try_approve_milestone(&f.client, &0), Ok(Ok(())));
+    assert_eq!(token_client.balance(&f.freelancer), 1_000_i128);
+}
+
+#[test]
+fn admin_pause_escrow_blocks_claim_auto_release_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+
+    let current_time = env.ledger().timestamp();
+    env.ledger().set_timestamp(current_time + 604_801);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let contract_before = token_client.balance(&f.escrow.address);
+    let freelancer_before = token_client.balance(&f.freelancer);
+
+    assert_eq!(
+        f.escrow.try_claim_auto_release(&f.freelancer, &0),
+        Err(Ok(Error::Paused))
+    );
+
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+    assert_eq!(token_client.balance(&f.freelancer), freelancer_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(
+        f.escrow.try_claim_auto_release(&f.freelancer, &0),
+        Ok(Ok(()))
+    );
+    assert_eq!(token_client.balance(&f.freelancer), 1_000_i128);
+}
+
+#[test]
+fn admin_pause_escrow_blocks_raise_dispute_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    assert_eq!(
+        f.escrow
+            .try_raise_dispute(&f.client, &0, &dispute_reason_hash(&env)),
+        Err(Ok(Error::Paused))
+    );
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(
+        f.escrow
+            .try_raise_dispute(&f.client, &0, &dispute_reason_hash(&env)),
+        Ok(Ok(()))
+    );
+}
+
+#[test]
+fn admin_pause_escrow_blocks_resolve_dispute_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+    f.escrow
+        .raise_dispute(&f.client, &0, &dispute_reason_hash(&env));
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let contract_before = token_client.balance(&f.escrow.address);
+    let freelancer_before = token_client.balance(&f.freelancer);
+
+    assert_eq!(
+        f.escrow.try_resolve_dispute(&f.arbiter, &0, &true),
+        Err(Ok(Error::Paused))
+    );
+
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+    assert_eq!(token_client.balance(&f.freelancer), freelancer_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert_eq!(
+        f.escrow.try_resolve_dispute(&f.arbiter, &0, &true),
+        Ok(Ok(()))
+    );
+    assert_eq!(token_client.balance(&f.freelancer), 1_000_i128);
+}
+
+#[test]
+fn admin_pause_escrow_blocks_apply_dispute_arbitration_split_and_resumes() {
+    let env = test_env();
+    let f = pause_test_fixture(&env);
+    let token_client = soroban_sdk::token::Client::new(&f.env, &f.token_id);
+    f.escrow.fund(&f.client);
+    f.escrow.mark_delivered(&f.freelancer, &0);
+    f.escrow
+        .raise_dispute(&f.client, &0, &dispute_reason_hash(&env));
+
+    f.escrow.admin_pause_escrow(&f.admin);
+
+    let contract_before = token_client.balance(&f.escrow.address);
+    let client_before = token_client.balance(&f.client);
+    let freelancer_before = token_client.balance(&f.freelancer);
+
+    assert_eq!(
+        f.escrow
+            .try_apply_dispute_arbitration_split(&f.arbiter, &0, &5000),
+        Err(Ok(Error::Paused))
+    );
+
+    assert_eq!(token_client.balance(&f.escrow.address), contract_before);
+    assert_eq!(token_client.balance(&f.client), client_before);
+    assert_eq!(token_client.balance(&f.freelancer), freelancer_before);
+
+    f.escrow.admin_resume_escrow(&f.admin);
+    assert!(f
+        .escrow
+        .try_apply_dispute_arbitration_split(&f.arbiter, &0, &5000)
+        .is_ok());
+    assert_eq!(token_client.balance(&f.client), client_before + 500_i128);
+    assert_eq!(
+        token_client.balance(&f.freelancer),
+        freelancer_before + 500_i128
+    );
 }

@@ -12,10 +12,10 @@ PRs that add, remove or change a transition must update this file (see
 
 | Actor | Set by | Notes |
 |---|---|---|
-| Admin | `initialize`, `transfer_admin`, `execute_admin_transfer` | Platform operator. Controls overrides, pauses, fees, yield, whitelist and upgrades. |
-| Client | `initialize` | Funds the job and approves milestones. |
-| Freelancer | `initialize` | Delivers milestones and receives payouts. |
-| Arbiter | `initialize` | Resolves disputed milestones. |
+| Admin | `__constructor`, `transfer_admin`, `execute_admin_transfer` | Platform operator. Controls overrides, pauses, fees, yield, whitelist and upgrades. |
+| Client | `__constructor` | Funds the job and approves milestones. |
+| Freelancer | `__constructor` | Delivers milestones and receives payouts. |
+| Arbiter | `__constructor` | Resolves disputed milestones. |
 | Multisig signer | `multisig_approval_init` | Approves proposal IDs (used by `execute_admin_transfer`). |
 | Anyone | n/a | May call read-only and calculation endpoints, and `execute_admin_transfer` once it is approved. |
 
@@ -25,7 +25,7 @@ PRs that add, remove or change a transition must update this file (see
 
 | Status | Meaning |
 |---|---|
-| `Pending` | Created by `initialize`; not yet delivered. |
+| `Pending` | Created by `__constructor`; not yet delivered. |
 | `Delivered` | Freelancer marked it delivered; the auto-release window is running. |
 | `PartiallyReleased` | Client released part of the amount with `approve_partial`. |
 | `Disputed` | Frozen for arbitration. |
@@ -37,7 +37,7 @@ PRs that add, remove or change a transition must update this file (see
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: initialize
+    [*] --> Pending: __constructor
     Pending --> Delivered: mark_delivered
     Delivered --> Released: approve_milestone, claim_auto_release, approve_partial (full)
     Delivered --> PartiallyReleased: approve_partial
@@ -73,7 +73,7 @@ states.
 stateDiagram-v2
     state "Unfunded" as Unfunded
     state "Funded" as Funded
-    [*] --> Unfunded: initialize
+    [*] --> Unfunded: __constructor
     Unfunded --> Funded: fund
 
     state "Accepted" as Accepted
@@ -102,14 +102,14 @@ stateDiagram-v2
 | Funded | `JobMeta.funded`, `DataKey::FundedAt` | `fund` | never | most settlement entry points (`NotFunded`) |
 | Acceptance | `DataKey::Acceptance` (bit 1 freelancer, bit 2 arbiter) | `accept_job`, `accept_arbiter` | never | `mark_delivered`, `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` (`NotAccepted`), `withdraw_unaccepted` |
 | Emergency pause | `DataKey::Ep` | `emergency_pause`, `emergency_pause_admin_override` | `emergency_unpause`, `emergency_pause_admin_override` | `ensure_not_paused` and the calculators listed below |
-| Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `assert_not_paused` |
+| Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `ensure_not_paused`, `assert_not_paused` |
 | Cancel approval | `DataKey::CancelApproval` (`CancelApprovalRecord`: `mask` + `approved_at`) | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party), expiry after `CANCEL_APPROVAL_TTL_SECONDS` | `cancel_escrow`, `revoke_cancel_approval` |
 | Cancel lock | `DataKey::CancelLock` | `cancel_escrow` (second party) | `admin_override_cancel_release`, `admin_override_cancel_refund` | `ensure_not_paused` |
 | Multisig lock | `DataKey::MultisigLocked` | `multisig_lock` | `multisig_admin_override_release`, `multisig_admin_override_refund` | the multisig override and split endpoints |
 | Tax record | `DataKey::TaxWithholdingLock(i)` | `tax_withholding_deductions` | `admin_override_tax_release`, `admin_override_tax_refund`, `admin_override_tax_split_refund` | the tax override endpoints |
 | Owed balance | `DataKey::Owed(address)`, `DataKey::TotalOwed` | any payout whose transfer fails | `withdraw` | `withdraw`, settlement balance caps |
 
-`ensure_not_paused` rejects with `Paused` while `Ep` is set and with
+`ensure_not_paused` rejects with `Paused` while `Ep` or the admin `Paused` flag is set and with
 `EscrowLocked` while `CancelLock` is set. `assert_not_paused` rejects with
 `Paused` while the admin `Paused` flag is set.
 
@@ -132,7 +132,7 @@ topic.
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `initialize` | admin | not initialized; valid addresses; non-empty positive amounts; `auto_release_seconds > 0` | none | every milestone `Pending` | none | `init` |
+| `__constructor` | deployer | not initialized; valid addresses; non-empty positive amounts; `auto_release_seconds > 0` | none | every milestone `Pending` | none | `init` |
 | `fund` | client | `ensure_not_paused`; not funded | n/a | job `funded = true` | client → contract, total amount | `fund` |
 | `add_whitelisted_token` | admin | not funded; whitelist not full | n/a | n/a | none | `wtok` |
 | `remove_whitelisted_token` | admin | not funded; token present; not the last token | n/a | n/a | none | `wldel` |
