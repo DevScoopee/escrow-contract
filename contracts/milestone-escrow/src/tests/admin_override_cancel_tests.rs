@@ -375,3 +375,76 @@ fn test_cancel_refund_minimum_valid_amount() {
 
     assert_eq!(token.balance(&client_addr), client_before + 1);
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Issue #727: both overrides leave the same ledger shape
+// ────────────────────────────────────────────────────────────────────────────
+
+/// After either override, `CancelLock` and `YieldAccrued` are absent from
+/// storage rather than rewritten to `false` / `0`.
+#[test]
+fn test_both_cancel_overrides_remove_cancel_lock_and_yield_accrued() {
+    for release in [true, false] {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
+            setup_funded_escrow(&env, vec![&env, 5_000_i128]);
+        client.cancel_escrow(&client_addr);
+        client.cancel_escrow(&freelancer_addr);
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::YieldAccrued, &7_i128);
+        });
+
+        if release {
+            client.admin_override_cancel_release(&admin_addr);
+        } else {
+            client.admin_override_cancel_refund(&admin_addr);
+        }
+
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().instance().has(&DataKey::CancelLock));
+            assert!(!env.storage().persistent().has(&DataKey::YieldAccrued));
+        });
+    }
+}
+
+/// The negative-field guard (issue #386) applies to both override directions.
+#[test]
+fn test_both_cancel_overrides_reject_negative_milestone_fields() {
+    for release in [true, false] {
+        for negative_amount in [true, false] {
+            let env = Env::default();
+            env.mock_all_auths();
+
+            let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
+                setup_funded_escrow(&env, vec![&env, 5_000_i128, 5_000_i128]);
+            client.cancel_escrow(&client_addr);
+            client.cancel_escrow(&freelancer_addr);
+            env.as_contract(&contract_id, || {
+                let mut milestone: crate::Milestone = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Milestone(0))
+                    .unwrap();
+                if negative_amount {
+                    milestone.amount = i128::MIN;
+                } else {
+                    milestone.released_amount = -1;
+                }
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Milestone(0), &milestone);
+            });
+
+            let result = if release {
+                client.try_admin_override_cancel_release(&admin_addr)
+            } else {
+                client.try_admin_override_cancel_refund(&admin_addr)
+            };
+            assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+        }
+    }
+}
