@@ -155,7 +155,7 @@ fn test_get_pending_admin_transfer_returns_some_after_proposal() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &42u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     let before = capture_ledger(&env, &contract_id);
     assert!(before.pending_key_exists);
@@ -166,7 +166,7 @@ fn test_get_pending_admin_transfer_returns_some_after_proposal() {
 
     let proposal = result.expect("must return Some after a pending proposal");
     assert_eq!(proposal.new_admin, new_admin);
-    assert_eq!(proposal.proposal_id, 42u32);
+    assert_eq!(proposal.proposal_id, 1u32);
     assert_storage_unchanged(&before, &after);
 }
 
@@ -181,7 +181,7 @@ fn test_get_pending_admin_transfer_returns_none_after_cancel() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &7u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
     client.cancel_admin_transfer_proposal(&admin_addr);
 
     let before = capture_ledger(&env, &contract_id);
@@ -207,7 +207,7 @@ fn test_get_pending_admin_transfer_returns_none_after_execute() {
 
     let signers = vec![&env, new_admin.clone()];
     client.multisig_approval_init(&admin_addr, &signers, &1u32);
-    client.propose_admin_transfer(&admin_addr, &new_admin, &1u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
     client.multisig_approve(&new_admin, &1u32);
     client.execute_admin_transfer();
 
@@ -232,7 +232,7 @@ fn test_get_pending_admin_transfer_is_idempotent() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &99u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     for _ in 0..3 {
         let before = capture_ledger(&env, &contract_id);
@@ -241,7 +241,7 @@ fn test_get_pending_admin_transfer_is_idempotent() {
 
         let proposal = result.expect("must return Some on every read");
         assert_eq!(proposal.new_admin, new_admin);
-        assert_eq!(proposal.proposal_id, 99u32);
+        assert_eq!(proposal.proposal_id, 1u32);
         assert_storage_unchanged(&before, &after);
     }
 }
@@ -258,7 +258,7 @@ fn test_get_pending_admin_transfer_snapshot_is_byte_identical_before_and_after()
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &5u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     let before = capture_ledger(&env, &contract_id);
     let _ = client.get_pending_admin_transfer();
@@ -307,9 +307,7 @@ fn test_get_pending_admin_transfer_returns_exact_proposal_payload() {
 
     let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
-    let proposal_id: u32 = 12_345;
-
-    client.propose_admin_transfer(&admin_addr, &new_admin, &proposal_id);
+    let proposal_id = client.propose_admin_transfer(&admin_addr, &new_admin);
 
     let proposal = client
         .get_pending_admin_transfer()
@@ -318,7 +316,7 @@ fn test_get_pending_admin_transfer_returns_exact_proposal_payload() {
     assert_eq!(proposal.new_admin, new_admin, "new_admin must be verbatim");
     assert_eq!(
         proposal.proposal_id, proposal_id,
-        "proposal_id must be verbatim"
+        "proposal_id must match the ID the contract assigned"
     );
 }
 
@@ -333,7 +331,7 @@ fn test_get_pending_admin_transfer_unaffected_by_pause_state() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &3u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
     client.emergency_pause(&client_addr, &freelancer_addr);
 
     let before = capture_ledger(&env, &contract_id);
@@ -344,6 +342,6 @@ fn test_get_pending_admin_transfer_unaffected_by_pause_state() {
     let after = capture_ledger(&env, &contract_id);
     let proposal = result.expect("proposal must still be readable while paused");
     assert_eq!(proposal.new_admin, new_admin);
-    assert_eq!(proposal.proposal_id, 3u32);
+    assert_eq!(proposal.proposal_id, 1u32);
     assert_storage_unchanged(&before, &after);
 }

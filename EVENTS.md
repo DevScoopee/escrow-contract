@@ -69,6 +69,8 @@ row here, and a row here must correspond to a topic in the source.
 | `m_ext`    | `MilestoneTimeExtensionEvent`    | state change      |
 | `m_extcns` | `TimeExtConsentEvent`            | state change      |
 | `taxwith`  | `TaxWithholdingAppliedEvent`     | state change      |
+| `taxrcpt`  | `TaxRecipientSetEvent`           | state change      |
+| `taxpaid`  | `TaxPaidEvent`                   | state change      |
 | `taxwh`    | `TaxWithholdingDeductionsEvent`  | calculation       |
 | `twspltref`| `TaxWithholdingSplitRefundEvent` | calculation       |
 | `splitref` | `SplitRefundCalculatedEvent`     | calculation       |

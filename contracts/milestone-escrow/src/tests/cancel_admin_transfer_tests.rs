@@ -54,7 +54,7 @@ fn test_cancel_admin_transfer_happy_path() {
     let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &7u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
     assert!(client.get_pending_admin_transfer().is_some());
 
     client.cancel_admin_transfer_proposal(&admin_addr);
@@ -65,7 +65,7 @@ fn test_cancel_admin_transfer_happy_path() {
     let events = crate::all_event_tuples(&env);
     let ev = AdminTransferCancelledEvent::from_val(&env, &events.last().unwrap().2);
     assert_eq!(ev.admin, admin_addr);
-    assert_eq!(ev.proposal_id, 7);
+    assert_eq!(ev.proposal_id, 1);
 
     assert!(client.get_pending_admin_transfer().is_none());
 }
@@ -92,7 +92,7 @@ fn test_cancel_admin_transfer_unauthorized_no_mutation() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &3u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     // The escrow client is not the admin.
     assert_eq!(
@@ -103,7 +103,7 @@ fn test_cancel_admin_transfer_unauthorized_no_mutation() {
     // A rejected call must leave the proposal exactly as it was.
     let pending = client.get_pending_admin_transfer().unwrap();
     assert_eq!(pending.new_admin, new_admin);
-    assert_eq!(pending.proposal_id, 3);
+    assert_eq!(pending.proposal_id, 1);
 }
 
 #[test]
@@ -132,18 +132,18 @@ fn test_cancel_admin_transfer_proposal_clears_lock_and_allows_new_proposal() {
     let first = Address::generate(&env);
     let second = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &first, &1u32);
+    client.propose_admin_transfer(&admin_addr, &first);
 
     // While one is pending, a second proposal is refused outright.
     assert_eq!(
-        client.try_propose_admin_transfer(&admin_addr, &second, &2u32),
+        client.try_propose_admin_transfer(&admin_addr, &second),
         Err(Ok(Error::AdminTransferPending))
     );
 
     client.cancel_admin_transfer_proposal(&admin_addr);
 
     // Cancelling releases that block, which is the point of the endpoint.
-    client.propose_admin_transfer(&admin_addr, &second, &2u32);
+    client.propose_admin_transfer(&admin_addr, &second);
     let pending = client.get_pending_admin_transfer().unwrap();
     assert_eq!(pending.new_admin, second);
     assert_eq!(pending.proposal_id, 2);
@@ -166,7 +166,7 @@ fn test_cancel_admin_transfer_footprint_is_single_key_write() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &9u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     let admin_before: Address = env.as_contract(&contract_id, || {
         env.storage().persistent().get(&DataKey::Admin).unwrap()
@@ -211,7 +211,7 @@ fn test_cancel_admin_transfer_footprint_full_storage_snapshot() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     let new_admin = Address::generate(&env);
 
-    client.propose_admin_transfer(&admin_addr, &new_admin, &11u32);
+    client.propose_admin_transfer(&admin_addr, &new_admin);
 
     let (instance_before, persistent_before, temporary_before): (
         Map<Val, Val>,
@@ -248,11 +248,25 @@ fn test_cancel_admin_transfer_footprint_full_storage_snapshot() {
     assert_eq!(instance_after, instance_before);
     assert_eq!(temporary_after, temporary_before);
 
-    // Persistent storage lost exactly one entry: PendingAdminTransfer. Every
-    // other persistent key/value pair (including Admin) survives unchanged.
+    // Persistent storage lost exactly one entry, PendingAdminTransfer, and the
+    // proposal record (#785) was marked Cancelled so its ID and approvals are
+    // spent. Every other persistent key/value pair (including Admin) survives
+    // unchanged.
     assert_eq!(persistent_after.len(), persistent_before.len() - 1);
     assert!(persistent_after.get(pending_key).is_none());
+    let record_key: Val = DataKey::AdminProposal(1).into_val(&env);
+    let record: crate::AdminTransferProposal = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AdminProposal(1))
+            .unwrap()
+    });
+    assert_eq!(record.status, crate::AdminProposalStatus::Cancelled);
+    assert_eq!(record.approvals_bitmap, 0);
     let mut expected_persistent = persistent_before.clone();
     expected_persistent.remove(pending_key);
-    assert_eq!(persistent_after, expected_persistent);
+    expected_persistent.remove(record_key);
+    let mut actual_persistent = persistent_after.clone();
+    actual_persistent.remove(record_key);
+    assert_eq!(actual_persistent, expected_persistent);
 }

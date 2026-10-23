@@ -293,6 +293,7 @@ fn is_multisig_approved_does_not_mutate_ledger_with_no_approvals() {
 fn is_multisig_approved_does_not_mutate_ledger_below_threshold() {
     let env = Env::default();
     let (_, signers, escrow) = multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
     escrow.multisig_approve(&signers.get(0).unwrap(), &1u32);
 
     let before = env.to_ledger_snapshot();
@@ -311,6 +312,7 @@ fn is_multisig_approved_does_not_mutate_ledger_below_threshold() {
 fn is_multisig_approved_does_not_mutate_ledger_when_approved() {
     let env = Env::default();
     let (_, signers, escrow) = multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
     escrow.multisig_approve(&signers.get(0).unwrap(), &1u32);
     escrow.multisig_approve(&signers.get(1).unwrap(), &1u32);
 
@@ -334,6 +336,7 @@ fn is_multisig_approved_does_not_extend_ttl() {
 
     let env = Env::default();
     let (_, signers, escrow) = multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
     escrow.multisig_approve(&signers.get(0).unwrap(), &1u32);
     env.ledger().with_mut(|li| li.sequence_number += 10);
 
@@ -351,6 +354,7 @@ fn is_multisig_approved_does_not_extend_ttl() {
 fn is_multisig_approved_emits_no_events() {
     let env = Env::default();
     let (_, signers, escrow) = multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
     escrow.multisig_approve(&signers.get(0).unwrap(), &1u32);
 
     escrow.is_multisig_approved(&1u32);

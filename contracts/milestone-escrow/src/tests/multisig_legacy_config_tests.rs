@@ -33,6 +33,7 @@ fn escrow_with_legacy_multisig(
 fn legacy_layout_still_counts_approvals_to_the_threshold() {
     let env = Env::default();
     let (_, escrow, signers) = escrow_with_legacy_multisig(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 7);
 
     let first = escrow.multisig_approve(&signers.get(0).unwrap(), &7);
     assert_eq!(
@@ -59,6 +60,7 @@ fn legacy_layout_still_rejects_non_signers() {
     let (_, escrow, _) = escrow_with_legacy_multisig(&env);
 
     let outsider = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 7);
     assert_eq!(
         escrow.try_multisig_approve(&outsider, &7),
         Err(Ok(Error::Unauthorized))

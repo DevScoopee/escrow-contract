@@ -33,6 +33,14 @@ fn setup(env: &Env) -> (Address, Address, MilestoneEscrowClient<'_>) {
     (admin, contract_id, client)
 }
 
+/// Funded escrow with no multisig regime: `transfer_admin` is closed once
+/// signers are registered (#786), so its target checks run without one.
+fn setup_single_admin(env: &Env) -> (Address, Address, MilestoneEscrowClient<'_>) {
+    env.mock_all_auths();
+    let (_, _, _, admin, _, contract_id, client) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    (admin, contract_id, client)
+}
+
 fn admin_event_count(env: &Env) -> u32 {
     let topics: [Val; 2] = [
         symbol_short!("adminprp").into_val(env),
@@ -76,7 +84,7 @@ fn propose_rejects_contract_address_as_new_admin() {
     let (admin, contract_id, client) = setup(&env);
 
     assert_eq!(
-        client.try_propose_admin_transfer(&admin, &contract_id, &1u32),
+        client.try_propose_admin_transfer(&admin, &contract_id),
         Err(Ok(Error::InvalidAddress))
     );
     assert_admin_unchanged(&env, &contract_id, &admin);
@@ -88,7 +96,7 @@ fn propose_rejects_current_admin_as_new_admin() {
     let (admin, contract_id, client) = setup(&env);
 
     assert_eq!(
-        client.try_propose_admin_transfer(&admin, &admin, &1u32),
+        client.try_propose_admin_transfer(&admin, &admin),
         Err(Ok(Error::InvalidAddress))
     );
     assert_admin_unchanged(&env, &contract_id, &admin);
@@ -101,8 +109,8 @@ fn propose_still_accepts_a_distinct_new_admin() {
 
     let new_admin = Address::generate(&env);
     assert_eq!(
-        client.try_propose_admin_transfer(&admin, &new_admin, &1u32),
-        Ok(Ok(()))
+        client.try_propose_admin_transfer(&admin, &new_admin),
+        Ok(Ok(1))
     );
     assert_eq!(
         client.get_pending_admin_transfer().unwrap().new_admin,
@@ -115,7 +123,7 @@ fn propose_still_accepts_a_distinct_new_admin() {
 #[test]
 fn transfer_rejects_contract_address_as_new_admin() {
     let env = test_env();
-    let (admin, contract_id, client) = setup(&env);
+    let (admin, contract_id, client) = setup_single_admin(&env);
 
     assert_eq!(
         client.try_transfer_admin(&admin, &contract_id),
@@ -127,7 +135,7 @@ fn transfer_rejects_contract_address_as_new_admin() {
 #[test]
 fn transfer_rejects_current_admin_as_new_admin() {
     let env = test_env();
-    let (admin, contract_id, client) = setup(&env);
+    let (admin, contract_id, client) = setup_single_admin(&env);
 
     assert_eq!(
         client.try_transfer_admin(&admin, &admin),
@@ -139,7 +147,7 @@ fn transfer_rejects_current_admin_as_new_admin() {
 #[test]
 fn transfer_still_accepts_a_distinct_new_admin() {
     let env = test_env();
-    let (admin, contract_id, client) = setup(&env);
+    let (admin, contract_id, client) = setup_single_admin(&env);
 
     let new_admin = Address::generate(&env);
     assert_eq!(client.try_transfer_admin(&admin, &new_admin), Ok(Ok(())));
@@ -147,4 +155,17 @@ fn transfer_still_accepts_a_distinct_new_admin() {
         env.storage().persistent().get(&DataKey::Admin).unwrap()
     });
     assert_eq!(stored, new_admin);
+}
+
+#[test]
+fn transfer_is_closed_once_a_multisig_regime_exists() {
+    let env = test_env();
+    let (admin, contract_id, client) = setup(&env);
+
+    let new_admin = Address::generate(&env);
+    assert_eq!(
+        client.try_transfer_admin(&admin, &new_admin),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_admin_unchanged(&env, &contract_id, &admin);
 }

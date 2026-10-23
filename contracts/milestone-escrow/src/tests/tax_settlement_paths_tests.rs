@@ -8,8 +8,8 @@
 //! `tax_withholding_split_refund`).
 //!
 //! The two sequence tests at the bottom pin the stranded-tax (#788) and
-//! stale-record (#689) behaviour. They fail on `main` today and are ignored
-//! until those fixes land.
+//! stale-record (#689) behaviour. The #689 one fails on `main` today and is
+//! ignored until that fix lands.
 
 use super::*;
 use crate::{DataKey, Error, TaxWithholdingRecord};
@@ -607,10 +607,9 @@ fn withholding_refund_rejects_bps_not_summing_to_scale() {
 // ── sequence tests ───────────────────────────────────────────────────────────
 
 /// withhold → `admin_override_tax_release`: once the milestone is settled the
-/// contract should hold nothing for it. On `main` the withheld tax is never
-/// paid to anyone and stays in the contract.
+/// contract should hold nothing for it: the withheld tax goes to the tax
+/// recipient (#788).
 #[test]
-#[ignore = "fails on main until #788 lands: withheld tax stays stranded in the contract"]
 fn tax_release_leaves_no_balance_for_the_milestone() {
     let env = test_env();
     env.mock_all_auths();

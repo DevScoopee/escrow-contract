@@ -12,6 +12,7 @@ mod admin_override_refund_tests;
 mod admin_override_release_tests;
 mod admin_override_streaming_release_tests;
 mod admin_pause_escrow_tests;
+mod admin_proposal_binding_tests;
 mod admin_resume_escrow_footprint_tests;
 mod admin_set_yield_rate_tests;
 mod admin_tax_withholding_guards_tests;
@@ -254,6 +255,25 @@ pub(crate) fn setup_unfunded_escrow(
     setup_escrow_inner(env, milestone_amounts, false)
 }
 
+/// Writes a `Pending` admin-transfer proposal record for `proposal_id`
+/// straight into storage, for tests of the approval mechanics that do not go
+/// through `propose_admin_transfer` (#785 rejects approvals for IDs with no
+/// record).
+pub(crate) fn seed_admin_proposal(env: &Env, contract_id: &Address, proposal_id: u32) {
+    env.as_contract(contract_id, || {
+        env.storage().persistent().set(
+            &DataKey::AdminProposal(proposal_id),
+            &crate::AdminTransferProposal {
+                proposal_id,
+                new_admin: Address::generate(env),
+                created_at: env.ledger().timestamp(),
+                status: crate::AdminProposalStatus::Pending,
+                approvals_bitmap: 0,
+            },
+        );
+    });
+}
+
 pub(crate) fn setup_funded_escrow(
     env: &Env,
     milestone_amounts: soroban_sdk::Vec<i128>,
@@ -309,6 +329,8 @@ fn setup_escrow_inner(
     );
     client.accept_job(&freelancer_addr);
     client.accept_arbiter(&arbiter_addr);
+    // Withholding a non-zero tax requires a recipient (#788).
+    client.set_tax_recipient(&admin_addr, &Address::generate(env));
     if funded {
         client.fund(&client_addr);
     }
@@ -9649,6 +9671,7 @@ fn test_multisig_approval_init_duplicate_fails() {
     let extra = Address::generate(&env);
     let new_signers = vec![&env, extra.clone()];
     let result = client.try_multisig_approval_init(&admin, &new_signers, &1u32);
+    crate::tests::seed_admin_proposal(&env, &client.address, 0);
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 
     // No storage entry was mutated: the original threshold (2, not the
@@ -9742,6 +9765,7 @@ fn test_multisig_approval_partial_approval() {
     let (client, _admin, signers) = setup_multisig(&env, 2);
 
     let signer1 = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
     let state = client
         .try_multisig_approve(&signer1, &1u32)
         .unwrap()
@@ -9762,6 +9786,7 @@ fn test_multisig_approval_reaches_threshold() {
 
     let signer1 = signers.get(0).unwrap();
     let signer2 = signers.get(1).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 2);
 
     let _ = client.multisig_approve(&signer1, &2u32);
     let state = client
@@ -9785,6 +9810,7 @@ fn test_multisig_approval_exceeds_threshold() {
     let signer1 = signers.get(0).unwrap();
     let signer2 = signers.get(1).unwrap();
     let signer3 = signers.get(2).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 3);
 
     let _ = client.multisig_approve(&signer1, &3u32);
     let _ = client.multisig_approve(&signer2, &3u32);
@@ -9807,6 +9833,7 @@ fn test_multisig_approval_idempotent() {
     let (client, _admin, signers) = setup_multisig(&env, 2);
 
     let signer1 = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 4);
     let _ = client.multisig_approve(&signer1, &4u32);
     let state = client
         .try_multisig_approve(&signer1, &4u32)
@@ -9826,6 +9853,7 @@ fn test_multisig_approval_unauthorized_signer_fails() {
     let (client, _admin, _signers) = setup_multisig(&env, 2);
 
     let impostor = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &client.address, 5);
     let result = client.try_multisig_approve(&impostor, &5u32);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
@@ -9840,6 +9868,7 @@ fn test_multisig_approval_no_auth_fails() {
 
     let signer1 = signers.get(0).unwrap();
     env.set_auths(&[]);
+    crate::tests::seed_admin_proposal(&env, &client.address, 6);
     let result = client.try_multisig_approve(&signer1, &6u32);
     assert!(result.is_err());
     assert!(matches!(result, Err(Err(_))));
@@ -9860,6 +9889,7 @@ fn test_is_multisig_approved_query() {
     let state0 = client.try_is_multisig_approved(&7u32).unwrap().unwrap();
     assert!(!state0.approved);
     assert_eq!(state0.approvals, 0);
+    crate::tests::seed_admin_proposal(&env, &client.address, 7);
 
     let _ = client.multisig_approve(&signer1, &7u32);
     let state1 = client.try_is_multisig_approved(&7u32).unwrap().unwrap();
@@ -9882,6 +9912,7 @@ fn test_multisig_approval_proposal_isolation() {
     let (client, _admin, signers) = setup_multisig(&env, 2);
 
     let signer1 = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 10);
     let _ = client.multisig_approve(&signer1, &10u32);
 
     let state = client.try_is_multisig_approved(&20u32).unwrap().unwrap();
@@ -9893,7 +9924,7 @@ fn test_multisig_approval_proposal_isolation() {
 /// a zero token balance — there is nothing at stake for signers to approve
 /// against.
 #[test]
-fn test_multisig_approve_blocked_when_contract_balance_is_zero() {
+fn test_multisig_approve_accepted_when_contract_balance_is_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -9904,9 +9935,13 @@ fn test_multisig_approve_blocked_when_contract_balance_is_zero() {
     let signer2 = Address::generate(&env);
     let signers = vec![&env, signer1.clone(), signer2.clone()];
     client.multisig_approval_init(&admin, &signers, &2u32);
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
 
-    let result = client.try_multisig_approve(&signer1, &1u32);
-    assert_eq!(result, Err(Ok(Error::MultiSigEmptyBalance)));
+    // Issue #787: recording an approval moves no tokens, so an unfunded
+    // escrow accepts it.
+    let state = client.multisig_approve(&signer1, &1u32);
+    assert_eq!(state.approvals, 1);
+    assert!(!state.approved);
 }
 
 /// Event: multisig_approve emits a structured `MultiSigApprovedEvent` on a
@@ -9919,6 +9954,7 @@ fn test_multisig_approve_emits_structured_event() {
 
     let (client, _admin, signers) = setup_multisig(&env, 2);
     let signer1 = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 42);
 
     client.multisig_approve(&signer1, &42u32);
 
@@ -9957,6 +9993,7 @@ fn test_multisig_approve_unauthorized_fails() {
     let (client, _admin, _signers) = setup_multisig(&env, 2);
 
     let impostor = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &client.address, 50);
     let result = client.try_multisig_approve(&impostor, &50u32);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
@@ -9966,9 +10003,9 @@ fn test_multisig_approve_unauthorized_fails() {
     assert_eq!(state.bitmap, 0);
 }
 
-/// Precondition guard: an illegal source state (zero contract balance) is
-/// rejected with `MultiSigEmptyBalance` and leaves the proposal's approval
-/// bitmap untouched.
+/// Precondition guard: approving an ID with no proposal record, or one whose
+/// proposal was already consumed, is rejected and leaves the approval bitmap
+/// untouched.
 #[test]
 fn test_multisig_approve_illegal_source_state_fails() {
     let env = Env::default();
@@ -9981,14 +10018,31 @@ fn test_multisig_approve_illegal_source_state_fails() {
     let signer2 = Address::generate(&env);
     let signers = vec![&env, signer1.clone(), signer2.clone()];
     client.multisig_approval_init(&admin, &signers, &2u32);
+    crate::tests::seed_admin_proposal(&env, &client.address, 51);
 
-    let result = client.try_multisig_approve(&signer1, &51u32);
-    assert_eq!(result, Err(Ok(Error::MultiSigEmptyBalance)));
+    // Illegal source state: no proposal record for the ID (#785).
+    let result = client.try_multisig_approve(&signer1, &52u32);
+    assert_eq!(result, Err(Ok(Error::NoPendingAdminTransfer)));
 
-    let state = client.is_multisig_approved(&51u32);
+    let state = client.is_multisig_approved(&52u32);
     assert!(!state.approved);
     assert_eq!(state.approvals, 0);
     assert_eq!(state.bitmap, 0);
+
+    // A consumed proposal is also an illegal source state.
+    env.as_contract(&client.address, || {
+        let mut record: crate::AdminTransferProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AdminProposal(51))
+            .unwrap();
+        record.status = crate::AdminProposalStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AdminProposal(51), &record);
+    });
+    let result = client.try_multisig_approve(&signer1, &51u32);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
 }
 
 /// Admin: unauthorised caller cannot initialise multisig, and no storage
@@ -10004,6 +10058,7 @@ fn test_multisig_approval_init_unauthorized_fails() {
     let impostor = Address::generate(&env);
     let new_signers = vec![&env, impostor.clone()];
     let result = client.try_multisig_approval_init(&impostor, &new_signers, &1u32);
+    crate::tests::seed_admin_proposal(&env, &client.address, 0);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
     // No storage entry was mutated: the original threshold (2, not the
@@ -10722,6 +10777,7 @@ fn test_multisig_single_sig_does_not_reach_2_of_2() {
     env.mock_all_auths();
     let (client, _admin, signers) = setup_multisig(&env, 2);
     // Only signer 0 approves
+    crate::tests::seed_admin_proposal(&env, &client.address, 1);
     let state = client.multisig_approve(&signers.get(0).unwrap(), &1u32);
     assert!(!state.approved, "single sig must not satisfy 2-of-2");
     assert_eq!(state.approvals, 1);
@@ -10734,6 +10790,7 @@ fn test_multisig_single_sig_does_not_reach_3_of_3() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, signers) = setup_multisig(&env, 3);
+    crate::tests::seed_admin_proposal(&env, &client.address, 2);
     let state = client.multisig_approve(&signers.get(0).unwrap(), &2u32);
     assert!(!state.approved, "single sig must not satisfy 3-of-3");
     assert_eq!(state.approvals, 1);
@@ -10746,6 +10803,7 @@ fn test_multisig_both_sigs_satisfy_2_of_2() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, signers) = setup_multisig(&env, 2);
+    crate::tests::seed_admin_proposal(&env, &client.address, 3);
     client.multisig_approve(&signers.get(0).unwrap(), &3u32);
     let state = client.multisig_approve(&signers.get(1).unwrap(), &3u32);
     assert!(state.approved, "both sigs must satisfy 2-of-2");
@@ -10759,6 +10817,7 @@ fn test_multisig_unregistered_signer_rejected() {
     env.mock_all_auths();
     let (client, _admin, _signers) = setup_multisig(&env, 2);
     let impostor = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &client.address, 4);
     let result = client.try_multisig_approve(&impostor, &4u32);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
@@ -10770,6 +10829,7 @@ fn test_multisig_duplicate_approval_is_idempotent() {
     env.mock_all_auths();
     let (client, _admin, signers) = setup_multisig(&env, 2);
     let signer = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &client.address, 5);
     client.multisig_approve(&signer, &5u32);
     let state = client.multisig_approve(&signer, &5u32); // second call same signer
     assert!(
@@ -10820,6 +10880,7 @@ fn test_multisig_2_of_3_satisfied_by_two_signers() {
     client.fund(&dummy_client);
     client.multisig_approval_init(&admin, &signers, &2u32); // 2-of-3
 
+    crate::tests::seed_admin_proposal(&env, &client.address, 6);
     client.multisig_approve(&s1, &6u32);
     let state = client.multisig_approve(&s2, &6u32);
     assert!(
@@ -10837,6 +10898,7 @@ fn test_multisig_approval_isolated_per_proposal() {
     env.mock_all_auths();
     let (client, _admin, signers) = setup_multisig(&env, 2);
     // Approve proposal 10 with both signers
+    crate::tests::seed_admin_proposal(&env, &client.address, 10);
     client.multisig_approve(&signers.get(0).unwrap(), &10u32);
     client.multisig_approve(&signers.get(1).unwrap(), &10u32);
     // Proposal 20 must still be unapproved
@@ -10859,6 +10921,7 @@ fn test_multisig_query_no_side_effects() {
     assert!(!state_before.approved);
     assert_eq!(state_before.approvals, 0);
     // Approve once
+    crate::tests::seed_admin_proposal(&env, &client.address, 99);
     client.multisig_approve(&signers.get(0).unwrap(), &99u32);
     let state_after = client.is_multisig_approved(&99u32);
     assert!(!state_after.approved);
@@ -10901,6 +10964,7 @@ fn test_multisig_threshold_one_satisfied_by_single_signer() {
     client.fund(&dummy_client);
     client.multisig_approval_init(&admin, &signers, &1u32); // 1-of-2
 
+    crate::tests::seed_admin_proposal(&env, &client.address, 50);
     let state = client.multisig_approve(&s1, &50u32);
     assert!(state.approved, "1-of-2 must be satisfied by single signer");
     assert_eq!(state.approvals, 1);
@@ -14166,8 +14230,8 @@ fn test_transfer_admin_illegal_source_state_no_mutation() {
 
     // Illegal source state: a multisig admin-transfer proposal is already pending.
     assert_eq!(
-        client.try_propose_admin_transfer(&admin_addr, &pending_new_admin, &1u32),
-        Ok(Ok(()))
+        client.try_propose_admin_transfer(&admin_addr, &pending_new_admin),
+        Ok(Ok(1))
     );
 
     let result = client.try_transfer_admin(&admin_addr, &direct_new_admin);
@@ -14739,7 +14803,7 @@ fn test_propose_admin_transfer_unauthorized_no_mutation() {
 
     assert_eq!(client.try_get_pending_admin_transfer(), Ok(Ok(None)));
 
-    let result = client.try_propose_admin_transfer(&attacker, &new_admin, &1u32);
+    let result = client.try_propose_admin_transfer(&attacker, &new_admin);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
     // A rejected call must not have written any ledger entry.
@@ -14755,12 +14819,9 @@ fn test_propose_admin_transfer_pending_state_no_overwrite() {
     let first = Address::generate(&env);
     let second = Address::generate(&env);
 
-    assert_eq!(
-        client.try_propose_admin_transfer(&admin, &first, &1u32),
-        Ok(Ok(()))
-    );
+    assert_eq!(client.try_propose_admin_transfer(&admin, &first), Ok(Ok(1)));
 
-    let rejected = client.try_propose_admin_transfer(&admin, &second, &2u32);
+    let rejected = client.try_propose_admin_transfer(&admin, &second);
     assert_eq!(rejected, Err(Ok(Error::AdminTransferPending)));
 
     // The already-pending proposal must remain untouched.
@@ -14787,7 +14848,7 @@ fn test_propose_admin_transfer_uninitialized_rejected() {
         client.try_get_pending_admin_transfer(),
         Err(Ok(Error::NotInitialized))
     );
-    let result = client.try_propose_admin_transfer(&admin, &new_admin, &1u32);
+    let result = client.try_propose_admin_transfer(&admin, &new_admin);
     assert_eq!(result, Err(Ok(Error::NotInitialized)));
     assert_eq!(
         client.try_get_pending_admin_transfer(),
@@ -14806,7 +14867,7 @@ fn test_propose_admin_transfer_invalid_address_rejected() {
         &env,
         "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     );
-    let result = client.try_propose_admin_transfer(&admin, &zero, &1u32);
+    let result = client.try_propose_admin_transfer(&admin, &zero);
     assert_eq!(result, Err(Ok(Error::InvalidAddress)));
     assert_eq!(client.try_get_pending_admin_transfer(), Ok(Ok(None)));
 }
@@ -14820,8 +14881,8 @@ fn test_propose_admin_transfer_happy_path() {
     let new_admin = Address::generate(&env);
 
     assert_eq!(
-        client.try_propose_admin_transfer(&admin, &new_admin, &42u32),
-        Ok(Ok(()))
+        client.try_propose_admin_transfer(&admin, &new_admin),
+        Ok(Ok(1))
     );
     let pending = client
         .try_get_pending_admin_transfer()
@@ -14829,7 +14890,7 @@ fn test_propose_admin_transfer_happy_path() {
         .unwrap()
         .unwrap();
     assert_eq!(pending.new_admin, new_admin);
-    assert_eq!(pending.proposal_id, 42u32);
+    assert_eq!(pending.proposal_id, 1u32);
 }
 
 #[test]

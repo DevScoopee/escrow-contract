@@ -163,8 +163,8 @@ fn test_admin_accrue_yield_authorizes_against_synced_admin_after_transfer_flow()
     let signer = Address::generate(&env);
     client.multisig_approval_init(&old_admin, &vec![&env, signer.clone()], &1u32);
 
-    client.propose_admin_transfer(&old_admin, &new_admin, &7u32);
-    client.multisig_approve(&signer, &7u32);
+    let proposal_id = client.propose_admin_transfer(&old_admin, &new_admin);
+    client.multisig_approve(&signer, &proposal_id);
     client.execute_admin_transfer();
 
     assert_eq!(admin_in(true, &contract_id, &env), Some(new_admin.clone()));

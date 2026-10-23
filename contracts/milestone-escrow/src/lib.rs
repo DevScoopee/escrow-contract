@@ -91,8 +91,11 @@ pub enum Error {
     /// `raise_dispute` was re-entered for a milestone whose dispute lock is
     /// still held, i.e. a dispute is already being raised in this transaction.
     DisputeAlreadyRaised = 24,
-    /// A multisig payout was attempted while the contract token balance is
-    /// zero, so there is nothing to allocate across the signer ratios.
+    /// Retained for error-code stability — no longer emitted.  The guard it
+    /// named (issue #787) was removed from `multisig_approve`: an approval
+    /// records signer intent and moves no tokens, so it is accepted on an
+    /// unfunded escrow.  Kept at `25` so off-chain decoders of the existing
+    /// code space stay valid.
     MultiSigEmptyBalance = 25,
     /// A guarded endpoint was called while `tax_withholding_deductions` is
     /// mid-execution and holds `DataKey::TaxWithholdingExecutionLock`.
@@ -486,6 +489,31 @@ pub enum DataKey {
     /// Instance: ledger timestamp at which `fund` ran.  Starts the
     /// `ACCEPTANCE_WINDOW_SECONDS` window checked by `withdraw_unaccepted`.
     FundedAt,
+    /// Persistent: the monotonic counter behind contract-assigned
+    /// admin-transfer proposal IDs (issue #785).  `propose_admin_transfer`
+    /// reads it, advances it with `checked_add` (`ArithmeticOverflow` instead
+    /// of a trapping overflow when exhausted), and writes the new value back
+    /// atomically with the proposal record, so IDs move forward only, are
+    /// never caller-chosen, and can never be reused to replay old approvals.
+    AdminProposalCounter,
+    /// Persistent: the admin-transfer proposal record for
+    /// `AdminProposal(proposal_id)` (issue #785).  It binds the ID to the
+    /// `new_admin` it would install, its creation timestamp, its lifecycle
+    /// status, and the signer approval bitmap — so approvals collected for one
+    /// proposal are unusable against any other, and marking the record
+    /// terminal consumes both the ID and its approvals.
+    AdminProposal(u32),
+    /// Persistent: the address that receives withheld tax, configured by the
+    /// admin through `set_tax_recipient` (issue #788).
+    /// `tax_withholding_deductions` refuses to record a withholding unless a
+    /// recipient exists, so a withheld amount can never be created with no
+    /// destination.
+    TaxRecipient,
+    /// Persistent: the tax recipient captured for milestone `u32` at the
+    /// moment `tax_withholding_deductions` withheld its tax (issue #788).
+    /// Every tax settlement path pays this address; records written before
+    /// the capture existed fall back to `DataKey::TaxRecipient`.
+    TaxWithholdingRecipient(u32),
 }
 
 #[contracttype]
@@ -1066,6 +1094,31 @@ pub struct AdminOverrideTaxSplitRefundEvent {
     pub freelancer_payout_bps: u32,
 }
 
+/// Emitted by `set_tax_recipient` when the admin configures the address that
+/// receives withheld tax (issue #788).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaxRecipientSetEvent {
+    pub admin: Address,
+    pub recipient: Address,
+}
+
+/// Emitted by each tax settlement path (`admin_override_tax_release`,
+/// `admin_override_tax_refund`, `admin_override_tax_split_refund`) when the
+/// withheld `tax_amount` is actually transferred to the configured recipient
+/// (issue #788).  Publishes only for a non-zero amount, so an indexer can
+/// reconcile every `taxwith` withholding with its eventual payout: the
+/// milestone it belonged to, the destination paid, and the exact amount.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaxPaidEvent {
+    pub contract_id: Address,
+    pub milestone_index: u32,
+    pub recipient: Address,
+    pub token: Address,
+    pub tax_amount: i128,
+}
+
 // ── escrow_interest_yield admin-override config ──────────────────────────────
 
 /// Consolidated yield configuration stored under `DataKey::YieldConfig`.
@@ -1289,6 +1342,38 @@ pub struct AdminTransferExecutedEvent {
 pub struct AdminTransferCancelledEvent {
     pub admin: Address,
     pub proposal_id: u32,
+}
+
+/// Lifecycle status of an admin-transfer proposal record (issue #785).
+///
+/// `Pending` is the only state that accepts approvals or can execute.
+/// `Executed` and `Cancelled` are terminal: the record stays on the ledger
+/// with its approval bitmap cleared as the tombstone that makes its ID — and
+/// every approval it ever held — permanently unusable, since the proposal ID
+/// counter only ever moves forward.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdminProposalStatus {
+    Pending,
+    Executed,
+    Cancelled,
+}
+
+/// Stored in `DataKey::AdminProposal(proposal_id)` by `propose_admin_transfer`
+/// (issue #785).  This record is what a multisig approval is bound to:
+/// `multisig_approve` only accepts an ID whose record exists and is still
+/// `Pending`, the approval bitmap lives inside the record beside the
+/// `new_admin` it would install, and `execute_admin_transfer` /
+/// `cancel_admin_transfer_proposal` mark it terminal and clear the bitmap, so
+/// neither the ID nor its approvals can ever be replayed.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposal {
+    pub proposal_id: u32,
+    pub new_admin: Address,
+    pub created_at: u64,
+    pub status: AdminProposalStatus,
+    pub approvals_bitmap: u32,
 }
 
 /// Emitted by `admin_pause_escrow` when the admin freezes normal operations.
@@ -3096,9 +3181,13 @@ impl MilestoneEscrow {
     /// 1. `current_admin.require_auth()` — SDK-level signature check.
     /// 2. Contract must be initialised (`NotInitialized`).
     /// 3. `require_admin` — verified admin key matches `DataKey::Admin`.
-    /// 4. `new_admin` must not be a zero address, the contract itself, or the
+    /// 4. No multisig approval regime may exist (`Unauthorized`) — issue #786:
+    ///    once `multisig_approval_init` has registered signers, a
+    ///    single-signature transfer would bypass them; the admin must use
+    ///    `propose_admin_transfer` → approvals → `execute_admin_transfer`.
+    /// 5. `new_admin` must not be a zero address, the contract itself, or the
     ///    current admin (`InvalidAddress`).
-    /// 5. No multisig admin-transfer proposal may already be pending
+    /// 6. No multisig admin-transfer proposal may already be pending
     ///    (`AdminTransferPending`).
     ///
     /// # Parameters
@@ -3108,7 +3197,9 @@ impl MilestoneEscrow {
     ///
     /// # Errors
     /// * `NotInitialized`       – Contract has not been initialized.
-    /// * `Unauthorized`         – `current_admin` is not the stored admin.
+    /// * `Unauthorized`         – `current_admin` is not the stored admin, or a
+    ///                            multisig regime is configured (issue #786;
+    ///                            use the multisig proposal flow instead).
     /// * `InvalidAddress`       – `new_admin` is a zero address, the contract
     ///                            itself, or the current admin.
     /// * `AdminTransferPending` – A multisig admin-transfer proposal is already
@@ -3130,6 +3221,17 @@ impl MilestoneEscrow {
         // Unauthorized) while reading the entry only once.
         let stored_admin = Self::load_admin(&env)?;
         if stored_admin != current_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        // Issue #786: after `multisig_approval_init` the legacy single-signature
+        // transfer path is closed.  It would let one key swap the admin without
+        // any signer approval, silently bypassing the regime the signers were
+        // registered for; every admin change on a multisig-configured contract
+        // must go through propose → approve → execute, which is the flow the
+        // signers audit.  `load_multisig_config` reads only, covering both the
+        // consolidated entry and a pre-#456 legacy two-key layout.
+        if Self::load_multisig_config(&env).is_some() {
             return Err(Error::Unauthorized);
         }
 
@@ -6710,24 +6812,31 @@ impl MilestoneEscrow {
     //    signer, and rather than the two separate `MultiSigSigners` /
     //    `MultiSigThreshold` keys used before issue #456.
     //
-    // 2. **Approval tracking uses a compact u32 bitmap** in temporary storage
-    //    under `MultiSigApproval(proposal_id)`.  Each bit represents one signer
-    //    by its index in the signers vec, eliminating the Address overhead from
-    //    every approval entry.  Up to 32 signers are supported per proposal.
+    // 2. **Approval tracking uses a compact u32 bitmap**, one bit per signer
+    //    by its index in the signers vec, eliminating the Address overhead
+    //    from every approval entry.  Up to 32 signers are supported per
+    //    proposal.
     //
-    // 3. **Temporary storage tier** is used for the bitmap so that the ledger
-    //    footprint is automatically evicted once the proposal lifecycle ends,
-    //    rather than persisting indefinitely.
+    // 3. **The bitmap lives inside the proposal record** —
+    //    `AdminProposal(proposal_id)`, written by `propose_admin_transfer`
+    //    (issue #785) — beside the `new_admin`, creation timestamp and
+    //    lifecycle status it belongs to.  That placement is what binds an
+    //    approval to one specific live proposal instead of to a free-floating
+    //    ID: the record must exist and be `Pending` before any bit can be
+    //    set, and executing or cancelling clears the bits in the same write
+    //    that consumes the record.  The former temporary
+    //    `MultiSigApproval(proposal_id)` entry is no longer written (its
+    //    `DataKey` variant is kept only so existing discriminants stay
+    //    stable): a temporary entry could be evicted mid-flight, silently
+    //    dropping collected approvals, and it carried no tie to the
+    //    proposal's contents.
     //
-    // Issue #457 audited the *write* path of `multisig_approve` against this
-    // design and found the layout itself already minimal: the bitmap is one key
-    // of key type `u32` holding one `u32`, there is no separate per-proposal
-    // metadata key, and the signer set/threshold metadata is read from the
-    // instance entry the call needs anyway (for `DataKey::Job`).  The one
-    // remaining redundant storage access was the unconditional bitmap write,
-    // which re-wrote an unchanged `u32` on every duplicate approval; it is now
-    // skipped whenever the signer's bit is already set, so a duplicate approval
-    // writes no contract storage key at all.  See `multisig_approve`.
+    // Issue #457 audited the *write* path of `multisig_approve` in the
+    // temporary-bitmap layout and found one redundant storage access of its
+    // day — an unconditional bitmap write that re-wrote an unchanged value on
+    // every duplicate approval.  The fix survives the move to the record: a
+    // duplicate approval writes no contract storage key at all.  See
+    // `multisig_approve`.
 
     const MAX_MULTISIG_SIGNERS: u32 = 32;
 
@@ -6871,67 +6980,63 @@ impl MilestoneEscrow {
     /// effect and is not an error.
     ///
     /// # Checks (in order)
-    /// Authorization and source-state guards run **before** any job or
-    /// token ledger entry is read or written, so a rejected call cannot
-    /// mutate storage:
+    /// Authorization and source-state guards run **before** any proposal
+    /// record is read or written, so a rejected call cannot mutate storage:
     /// 1. `signer.require_auth()` — the transaction must be signed by
     ///    `signer` (`Unauthorized` if missing).
-    /// 2. `signer` must be one of the registered multisig signers
-    ///    (`Unauthorized`).
-    /// 3. Contract token balance must be > 0 (`MultiSigEmptyBalance`).
+    /// 2. A multisig regime must exist (`NotInitialized`) and `signer` must be
+    ///    one of the registered multisig signers (`Unauthorized`).
+    /// 3. A proposal record must exist for `proposal_id`
+    ///    (`NoPendingAdminTransfer`) and still be `Pending` (`InvalidStatus`)
+    ///    — issue #785: an approval can only bind to a live,
+    ///    contract-assigned proposal, never to a free-floating ID, a consumed
+    ///    one, or an ID that was never proposed.
     /// 4. The signer's index must be representable as a bit position in the
     ///    `u32` approval bitmap (`ArithmeticOverflow`). This is evaluated with
     ///    `try_into` / `checked_shl` / `checked_add` and runs **before** the
     ///    bitmap is written, so an unrepresentable index cannot leave partial
     ///    state behind (see `multisig_approve_checked_arithmetic_tests`).
     ///
-    /// # Storage footprint (issue #457)
+    /// # Storage footprint (issues #457, #785, #787)
     /// Keys this call reads:
     /// * `DataKey::MultiSigConfig` (persistent, issue #772) — the registered signers
     ///   (which also provide the membership check and the signer's bit index)
     ///   and the approval threshold, in one consolidated entry (issue #456).
-    ///   It lives inside the contract's single
-    ///   `contract_instance` ledger entry, together with the `DataKey::Job`
-    ///   metadata read for the token address, so these reads add no extra
-    ///   entry to the invocation.
-    /// * `DataKey::MultiSigApproval(proposal_id)` (temporary) — the approval
-    ///   bitmap: one key of key type `u32` holding one `u32`, one bit per
-    ///   signer index.
+    /// * `DataKey::AdminProposal(proposal_id)` (persistent) — the proposal
+    ///   record that owns the approval bitmap (issue #785).
     ///
-    /// Keys this call writes: only `MultiSigApproval(proposal_id)`, and only
+    /// The former `DataKey::Job` metadata read and cross-contract token
+    /// `balance` probe are gone (issue #787): recording an approval moves no
+    /// tokens, so an unfunded escrow is a legitimate place to collect
+    /// signatures and this call no longer needs either.
+    ///
+    /// Keys this call writes: only `AdminProposal(proposal_id)`, and only
     /// when the signer's bit is not already set.  A duplicate approval cannot
-    /// change the bitmap, so it now writes no contract storage key at all
-    /// instead of re-writing the same `u32`; measured per invocation by
-    /// `multisig_approve_footprint_tests`: the duplicate path went from 2 entry
-    /// writes / 180 write bytes (one of which was the redundant copy of the
-    /// bitmap, 108 bytes) to 1 entry write / 72 bytes, the remaining write
-    /// being the auth nonce entry that every authenticated call consumes.  A
-    /// first approval is unchanged: it writes the bitmap exactly once, which is
-    /// the floor for recording an approval at all.
-    ///
-    /// Merging the bitmap with the signer set/threshold into one entry is
-    /// deliberately *not* done: the signer set is shared by every proposal, so
-    /// folding it into a per-proposal bitmap entry would duplicate the signer
-    /// vec into each proposal and move it out of the auto-evicting temporary
-    /// tier (optimisations 1 and 3 of the section comment above), while storing
-    /// the bitmap in the always-live instance entry would re-write the whole
-    /// instance entry — job metadata included — on every approval.  There is no
-    /// separate per-proposal metadata key to merge with the bitmap.  The
-    /// metadata consolidation that does exist — the former `MultiSigSigners` +
-    /// `MultiSigThreshold` pair into the single `MultiSigConfig` entry
-    /// — is issue #456's and is not duplicated here.
+    /// change the bitmap, so it writes no contract storage key at all instead
+    /// of re-writing the record; the first approval from each signer writes
+    /// the record exactly once — the floor for recording an approval at all
+    /// (measured per invocation by `multisig_approve_footprint_tests`).
     ///
     /// # Errors
-    /// * `NotInitialized`       – `multisig_approval_init` has not been called.
-    /// * `Unauthorized`         – `signer` did not sign, or is not a
+    /// * `NotInitialized`         – `multisig_approval_init` has not been
+    ///   called.
+    /// * `Unauthorized`           – `signer` did not sign, or is not a
     ///   registered signer.
-    /// * `MultiSigEmptyBalance` – Contract token balance is ≤ 0.
-    /// * `ArithmeticOverflow`   – The signer's position does not fit the `u32`
+    /// * `NoPendingAdminTransfer` – No proposal record exists for
+    ///   `proposal_id`: approving before a proposal exists, or against an ID
+    ///   the contract never assigned, is rejected (issue #785).
+    /// * `InvalidStatus`          – The proposal record exists but is no
+    ///   longer `Pending` — it was already executed or cancelled, so its
+    ///   approvals are spent (issue #785).
+    /// * `ArithmeticOverflow`     – The signer's position does not fit the `u32`
     ///   bitmap, i.e. the stored signer set holds more than
     ///   `MAX_MULTISIG_SIGNERS` = 32 entries (which `multisig_approval_init`
     ///   itself rejects with `MultiSigTooManySigners`, so this needs corrupt or
     ///   upgraded storage). Reported as a typed error instead of trapping on
     ///   the release profile's overflow checks.
+    ///
+    /// Note: `MultiSigEmptyBalance` (25) is **not** returned any more — the
+    /// balance guard it named was removed by issue #787.
     pub fn multisig_approve(
         env: Env,
         signer: Address,
@@ -6948,29 +7053,30 @@ impl MilestoneEscrow {
         let signers = config.0;
         let threshold = config.1;
 
-        // Reject callers who are not registered signers before touching any
-        // job/token ledger entry (find the signer's index, O(n) but n ≤ 32).
+        // Reject callers who are not registered signers (find the signer's
+        // index, O(n) but n ≤ 32).
         let signer_index = signers
             .iter()
             .position(|s| s == signer)
             .ok_or(Error::Unauthorized)?;
 
-        // Boundary guard: an approval collected against an empty escrow has
-        // no funds behind it, so block processing until the contract holds
-        // a positive token balance.
-        let meta = Self::load_job_meta(&env)?;
-        let token_client = token::Client::new(&env, &meta.token);
-        let contract_balance = token_client.balance(&env.current_contract_address());
-        if contract_balance <= 0 {
-            return Err(Error::MultiSigEmptyBalance);
-        }
-
-        // Read the current bitmap from temporary storage (default: 0 = no approvals).
-        let mut bitmap: u32 = env
+        // Issue #785: bind the approval to a live proposal record.  IDs are
+        // assigned by `propose_admin_transfer`, so a missing record means the
+        // proposal never existed, and a non-`Pending` record means it has
+        // already been consumed — either way this approval must not move.
+        //
+        // Issue #787: the token-balance guard that used to sit between the
+        // membership check and the bitmap read is gone.  Recording signer
+        // intent moves no tokens, so approvals are accepted on an unfunded
+        // escrow; `execute_admin_transfer` still cannot conjure funds.
+        let mut record: AdminTransferProposal = env
             .storage()
-            .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
-            .unwrap_or(0);
+            .persistent()
+            .get(&DataKey::AdminProposal(proposal_id))
+            .ok_or(Error::NoPendingAdminTransfer)?;
+        if record.status != AdminProposalStatus::Pending {
+            return Err(Error::InvalidStatus);
+        }
 
         // ── Turn the signer's index into its bitmap bit (issue #583) ─────────
         // This is the only integer computation in the call, and every step of
@@ -6992,20 +7098,24 @@ impl MilestoneEscrow {
             .map_err(|_| Error::ArithmeticOverflow)?;
         let mask = 1u32.checked_shl(idx).ok_or(Error::ArithmeticOverflow)?;
 
-        // Set the bit for this signer, and write the bitmap back only when the
+        // Set the bit for this signer, and write the record back only when the
         // bit actually changed (issue #457).  A duplicate approval
         // (`bitmap & mask != 0`) cannot change the value, so it writes no
         // contract storage key at all; the first approval from each signer
-        // writes the bitmap exactly once — the floor for recording an approval.
+        // writes the record exactly once — the floor for recording an approval.
         // Reaching the add only when the bit is clear also keeps `checked_add`
         // sound at the top of the range: `bitmap + mask` is then exactly
         // `bitmap | mask` and provably representable.
+        let bitmap = record.approvals_bitmap;
         if bitmap & mask == 0 {
-            bitmap = bitmap.checked_add(mask).ok_or(Error::ArithmeticOverflow)?;
+            record.approvals_bitmap = bitmap.checked_add(mask).ok_or(Error::ArithmeticOverflow)?;
             env.storage()
-                .temporary()
-                .set(&DataKey::MultiSigApproval(proposal_id), &bitmap);
+                .persistent()
+                .set(&DataKey::AdminProposal(proposal_id), &record);
         }
+        // Re-read after the conditional write so the state returned (and the
+        // event) always carries the bitmap as stored, new bit included.
+        let bitmap = record.approvals_bitmap;
 
         let approvals = bitmap.count_ones();
         let approved = approvals >= threshold;
@@ -7034,15 +7144,17 @@ impl MilestoneEscrow {
     ///
     /// # Returns
     /// A `MultiSigApprovalState` built from the persistent `MultiSigConfig`
-    /// (its threshold field) and the temporary `MultiSigApproval(proposal_id)`
-    /// bitmap.  An unknown or expired proposal reads as an empty bitmap
-    /// (`approvals == 0`).
+    /// (its threshold field) and the `AdminProposal(proposal_id)` record's
+    /// approval bitmap (issue #785).  An ID with no record reads as an empty
+    /// bitmap (`approvals == 0`), and so does an executed or cancelled
+    /// proposal — its record keeps the ID observable while its cleared bitmap
+    /// reports that its approvals are spent.
     ///
     /// # Guarantees
-    /// * **Read-only.**  Exactly two `get`s (instance config, temporary
-    ///   bitmap), via `read_multisig_approval`.  No `set`, `remove`,
+    /// * **Read-only.**  Exactly two `get`s (instance config, proposal
+    ///   record), via `read_multisig_approval`.  No `set`, `remove`,
     ///   `extend_ttl`, or event publish in instance, persistent, or temporary
-    ///   storage — in particular it never re-writes the bitmap or bumps its
+    ///   storage — in particular it never re-writes the record or bumps its
     ///   TTL.  The whole ledger is byte-identical before and after the call
     ///   (enforced by `read_path_tests`).
     /// * Requires no authorization.
@@ -7061,16 +7173,21 @@ impl MilestoneEscrow {
     /// **This function must contain only read operations.**
     fn read_multisig_approval(env: &Env, proposal_id: u32) -> Result<MultiSigApprovalState, Error> {
         // One instance `get` for the consolidated signer-set/threshold entry
-        // (issue #456).  The temporary bitmap below is the only other storage
+        // (issue #456).  The proposal record below is the only other storage
         // read; nothing here writes.
         let config = Self::load_multisig_config(env).ok_or(Error::NotInitialized)?;
         let threshold = config.1;
 
-        let bitmap: u32 = env
+        // Issue #785: the bitmap now lives in the proposal record.  Pre-upgrade
+        // temporary `MultiSigApproval` bitmaps are no longer consulted — an ID
+        // whose record never existed (or whose approvals were collected before
+        // the upgrade) reads as zero, so approvals are re-collected against a
+        // freshly proposed record.
+        let record: Option<AdminTransferProposal> = env
             .storage()
-            .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
-            .unwrap_or(0);
+            .persistent()
+            .get(&DataKey::AdminProposal(proposal_id));
+        let bitmap: u32 = record.map(|r| r.approvals_bitmap).unwrap_or(0);
 
         let approvals = bitmap.count_ones();
 
@@ -7095,6 +7212,15 @@ impl MilestoneEscrow {
 
     /// Propose a new admin via the multisig approval workflow.
     ///
+    /// The proposal ID is **assigned by the contract** (issue #785): the
+    /// persistent `DataKey::AdminProposalCounter` advances by one on every
+    /// proposal, so no caller can choose an ID to collide with approvals
+    /// already collected elsewhere, and an ID — along with the record and
+    /// approvals it consumed — can never be reused.  Both the full proposal
+    /// record (`DataKey::AdminProposal(id)`, holding `new_admin`, the
+    /// creation timestamp, the `Pending` status, and the approval bitmap) and
+    /// the `PendingAdminTransfer` lock/mirror are written atomically.
+    ///
     /// # Errors
     /// * `NotInitialized`       – Contract not initialised.
     /// * `Unauthorized`         – Caller is not the stored admin.
@@ -7102,12 +7228,13 @@ impl MilestoneEscrow {
     ///   itself, or the current admin.
     /// * `AdminTransferPending` – A proposal is already pending; execute or
     ///   cancel it before proposing another.
+    /// * `ArithmeticOverflow`   – The proposal counter has no representable
+    ///   successor (2^32 proposals have been created); nothing is written.
     pub fn propose_admin_transfer(
         env: Env,
         admin: Address,
         new_admin: Address,
-        proposal_id: u32,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         // Storage-footprint note: `DataKey::Version` (instance) and
         // `DataKey::Admin` (persistent) are only ever written together, in a
         // single atomic `initialize` call — a failed `initialize` reverts the
@@ -7135,6 +7262,33 @@ impl MilestoneEscrow {
             return Err(Error::AdminTransferPending);
         }
 
+        // Issue #785: assign the ID ourselves.  `checked_add` reports an
+        // exhausted counter as a typed error instead of trapping under the
+        // release profile's overflow checks, and the counter write lands in
+        // the same invocation as the two record writes below, so the assigned
+        // ID can never be handed out twice.
+        let proposal_id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AdminProposalCounter)
+            .unwrap_or(0u32)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let created_at = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AdminProposalCounter, &proposal_id);
+        env.storage().persistent().set(
+            &DataKey::AdminProposal(proposal_id),
+            &AdminTransferProposal {
+                proposal_id,
+                new_admin: new_admin.clone(),
+                created_at,
+                status: AdminProposalStatus::Pending,
+                approvals_bitmap: 0,
+            },
+        );
         env.storage().persistent().set(
             &DataKey::PendingAdminTransfer,
             &PendingAdminTransfer {
@@ -7152,19 +7306,25 @@ impl MilestoneEscrow {
             },
         );
 
-        Ok(())
+        Ok(proposal_id)
     }
 
     /// Execute a pending admin transfer once its multisig proposal has
     /// reached the configured approval threshold. Any caller may trigger
     /// execution — the safety guarantee comes from the collected signer
-    /// approvals, not caller identity — but nothing happens unless
-    /// `is_multisig_approved` reports the threshold met.
+    /// approvals, not caller identity — but nothing happens unless the
+    /// proposal **record's** approval bitmap (issue #785) reports the
+    /// threshold met.  On success the proposal is consumed: the record is
+    /// marked `Executed` with its bitmap cleared, so neither the ID nor its
+    /// approvals can ever run again.
     ///
     /// # Errors
     /// * `NotInitialized`          – Contract has never been initialised, so
     ///   there is no admin to transfer from.
     /// * `NoPendingAdminTransfer`  – No transfer is currently proposed.
+    /// * `InvalidStatus`           – The pending transfer has no proposal
+    ///   record (written before issue #785 landed, so its approvals cannot be
+    ///   verified — cancel it and re-propose), or the record is not `Pending`.
     /// * `MultiSigThresholdNotMet` – Approvals collected so far are below the
     ///   required threshold.
     pub fn execute_admin_transfer(env: Env) -> Result<(), Error> {
@@ -7179,8 +7339,26 @@ impl MilestoneEscrow {
             .get(&DataKey::PendingAdminTransfer)
             .ok_or(Error::NoPendingAdminTransfer)?;
 
-        let state = Self::is_multisig_approved(env.clone(), pending.proposal_id)?;
-        if !state.approved {
+        // Issue #785: execution is bound to the proposal record for exactly
+        // this pending ID.  The record carries the approvals next to the
+        // `new_admin` they authorize installing, so approvals collected for
+        // any other proposal can never satisfy this one, and a legacy pending
+        // entry with no record (pre-upgrade) cannot be executed at all.
+        let mut record: AdminTransferProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AdminProposal(pending.proposal_id))
+            .ok_or(Error::InvalidStatus)?;
+        if record.status != AdminProposalStatus::Pending {
+            return Err(Error::InvalidStatus);
+        }
+
+        // Threshold comes from the same consolidated config the approvals were
+        // collected against (issue #456); a contract without a multisig
+        // regime has no threshold to satisfy.
+        let config = Self::load_multisig_config(&env).ok_or(Error::NotInitialized)?;
+        let approvals = record.approvals_bitmap.count_ones();
+        if approvals < config.1 {
             return Err(Error::MultiSigThresholdNotMet);
         }
 
@@ -7203,6 +7381,15 @@ impl MilestoneEscrow {
             .persistent()
             .remove(&DataKey::PendingAdminTransfer);
 
+        // Consume the proposal: terminal status + cleared bitmap (issue #785).
+        // The record itself stays as the tombstone that keeps this ID — and
+        // every approval it held — permanently unusable.
+        record.status = AdminProposalStatus::Executed;
+        record.approvals_bitmap = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AdminProposal(pending.proposal_id), &record);
+
         env.events().publish(
             (symbol_short!("adminexc"),),
             AdminTransferExecutedEvent {
@@ -7216,7 +7403,11 @@ impl MilestoneEscrow {
     }
 
     /// Cancel a pending admin-transfer proposal, clearing the lock so a new
-    /// one can be proposed. Only the current admin may cancel.
+    /// one can be proposed. Only the current admin may cancel.  The proposal
+    /// record is consumed alongside the lock — marked `Cancelled` with its
+    /// approval bitmap cleared (issue #785) — so the cancelled ID and every
+    /// approval it collected are spent and cannot be revived by a later
+    /// proposal (IDs are never reused).
     ///
     /// # Errors
     /// * `NotInitialized`         – Contract not initialised.
@@ -7234,6 +7425,21 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .remove(&DataKey::PendingAdminTransfer);
+
+        // Consume the proposal record when one exists (issue #785).  A pending
+        // entry written before the record existed has nothing to mark — it is
+        // simply cleared here so the admin can re-propose under a fresh,
+        // record-backed ID.
+        let record_key = DataKey::AdminProposal(pending.proposal_id);
+        if let Some(mut record) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, AdminTransferProposal>(&record_key)
+        {
+            record.status = AdminProposalStatus::Cancelled;
+            record.approvals_bitmap = 0;
+            env.storage().persistent().set(&record_key, &record);
+        }
 
         env.events().publish(
             (symbol_short!("admincxl"),),
@@ -8656,6 +8862,105 @@ impl MilestoneEscrow {
         result
     }
 
+    // ── tax recipient configuration (issue #788) ──────────────────────────────
+
+    /// Configure the address that receives withheld tax.
+    ///
+    /// Must be in place **before** `tax_withholding_deductions` records a
+    /// withholding — that endpoint refuses without a recipient
+    /// (`InvalidStatus`), so a `tax_amount` can never be created that has no
+    /// destination to be settled to.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – Contract not initialised.
+    /// * `Unauthorized`    – Caller is not the stored admin.
+    /// * `InvalidAddress`  – `recipient` is a zero address.
+    pub fn set_tax_recipient(env: Env, admin: Address, recipient: Address) -> Result<(), Error> {
+        Self::require_admin(&env, &admin)?;
+
+        let zero_account = Address::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        );
+        let zero_contract = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
+        if recipient == zero_account || recipient == zero_contract {
+            return Err(Error::InvalidAddress);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::TaxRecipient, &recipient);
+
+        env.events().publish(
+            (symbol_short!("taxrcpt"),),
+            TaxRecipientSetEvent { admin, recipient },
+        );
+
+        Ok(())
+    }
+
+    /// Return the configured tax recipient, if any (issue #788).
+    ///
+    /// Pure read: no authorization, no writes — safe for indexers and UIs to
+    /// poll.  `None` means no recipient has ever been configured (or the
+    /// stored value was cleared), in which case `tax_withholding_deductions`
+    /// will refuse to withhold.
+    pub fn get_tax_recipient(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::TaxRecipient)
+    }
+
+    /// Resolve the address that must receive milestone `milestone_index`'s
+    /// withheld tax when a settlement path runs (issue #788): the recipient
+    /// captured when the tax was withheld, falling back to the current global
+    /// configuration for records written before that capture existed.
+    ///
+    /// With neither present the tax has no destination, so the caller fails
+    /// with `InvalidStatus` instead of paying a party that was never entitled
+    /// to it or stranding the amount inside the contract.
+    ///
+    /// **This function must contain only read operations.**
+    fn tax_settlement_recipient(env: &Env, milestone_index: u32) -> Result<Address, Error> {
+        if let Some(recipient) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::TaxWithholdingRecipient(milestone_index))
+        {
+            return Ok(recipient);
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::TaxRecipient)
+            .ok_or(Error::InvalidStatus)
+    }
+
+    /// Publish the additive `taxpaid` event for a non-zero tax transfer
+    /// (issue #788).  Kept in one place so all three settlement paths record
+    /// the payout identically; a nil withholding moves nothing and therefore
+    /// publishes nothing.
+    fn publish_tax_paid(
+        env: &Env,
+        milestone_index: u32,
+        recipient: &Address,
+        token: &Address,
+        tax_amount: i128,
+    ) {
+        if tax_amount > 0 {
+            env.events().publish(
+                (symbol_short!("taxpaid"),),
+                TaxPaidEvent {
+                    contract_id: env.current_contract_address(),
+                    milestone_index,
+                    recipient: recipient.clone(),
+                    token: token.clone(),
+                    tax_amount,
+                },
+            );
+        }
+    }
+
     // ── tax_withholding_deductions ────────────────────────────────────────────
 
     /// Compute and record a tax withholding deduction for a specific milestone.
@@ -8743,6 +9048,22 @@ impl MilestoneEscrow {
         let tax_amount = tax_split.first;
         let net_amount = tax_split.second;
 
+        // Issue #788: a withholding cannot be created without a destination
+        // that will later receive `tax_amount`.  At withholding time only the
+        // global `DataKey::TaxRecipient` must be present (the per-milestone
+        // capture is written below).  Without it, refuse with `InvalidStatus`
+        // rather than stranding funds.  A zero-tax record strands nothing, so
+        // it does not need a recipient.
+        if tax_amount > 0
+            && env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::TaxRecipient)
+                .is_none()
+        {
+            return Err(Error::InvalidStatus);
+        }
+
         let record = TaxWithholdingRecord {
             gross_amount,
             tax_amount,
@@ -8755,6 +9076,23 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .set(&DataKey::TaxWithholdingLock(milestone_index), &record);
+
+        // Capture the recipient that will receive this tax (issue #788).
+        // Reading the global recipient at this point is fine, since we just
+        // rejected if it were absent; persist a per-milestone snapshot so
+        // settlement paths can resolve the recipient even if it is later
+        // changed (and to cover legacy records whose per-milestone key was
+        // never written, the settlement lookup falls back to the global one).
+        if let Some(recipient) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::TaxRecipient)
+        {
+            env.storage().persistent().set(
+                &DataKey::TaxWithholdingRecipient(milestone_index),
+                &recipient,
+            );
+        }
 
         env.events().publish(
             (symbol_short!("taxwith"),),
@@ -9011,7 +9349,19 @@ impl MilestoneEscrow {
             .remove(&DataKey::TaxWithholdingLock(milestone_index));
 
         let token_client = token::Client::new(&env, &meta.token);
+        // Transfer net to freelancer and tax to the configured recipient (issue #788).
         Self::pay_or_credit(&env, &token_client, &meta.freelancer, &record.net_amount)?;
+        if record.tax_amount > 0 {
+            let recipient = Self::tax_settlement_recipient(&env, milestone_index)?;
+            Self::pay_or_credit(&env, &token_client, &recipient, &record.tax_amount)?;
+            Self::publish_tax_paid(
+                &env,
+                milestone_index,
+                &recipient,
+                &meta.token,
+                record.tax_amount,
+            );
+        }
 
         env.events().publish(
             (symbol_short!("adtxrls"),),
@@ -9030,10 +9380,15 @@ impl MilestoneEscrow {
     }
 
     /// Admin emergency override: resolve a tax-locked milestone by refunding
-    /// the gross amount to the client.
+    /// the client **net** of withheld tax (`gross − tax`) and paying
+    /// `tax_amount` to the configured tax recipient (issue #788).
     ///
-    /// Reads the `TaxWithholdingRecord`, transfers `gross_amount` to the client,
-    /// marks the milestone `Refunded`, and removes the lock entry.
+    /// Reads the `TaxWithholdingRecord`, transfers `gross_amount - tax_amount`
+    /// to the client, transfers `tax_amount` to the tax recipient, marks the
+    /// milestone `Refunded`, and removes the lock entry.  This preserves the
+    /// invariant that `client refund + freelancer payout + tax payment = gross`
+    /// in settlement (and here freelancer receives nothing, so
+    /// `client_net + tax = gross - tax + tax = gross`).
     ///
     /// Only the verified admin key can call this function.
     ///
@@ -9043,7 +9398,8 @@ impl MilestoneEscrow {
     /// * `NotFunded`        – Escrow not yet funded.
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidStatus`    – No tax-withholding lock exists for this milestone,
-    ///                        or the milestone is already terminal.
+    ///                        or the milestone is already terminal; also returned
+    ///                        if no tax recipient can be resolved (issue #788).
     /// * `InvalidAmount`    – Gross amount is zero.
     pub fn admin_override_tax_refund(
         env: Env,
@@ -9086,7 +9442,21 @@ impl MilestoneEscrow {
             .remove(&DataKey::TaxWithholdingLock(milestone_index));
 
         let token_client = token::Client::new(&env, &meta.token);
-        Self::pay_or_credit(&env, &token_client, &meta.client, &record.gross_amount)?;
+        let client_net = record.gross_amount - record.tax_amount;
+        if client_net > 0 {
+            Self::pay_or_credit(&env, &token_client, &meta.client, &client_net)?;
+        }
+        if record.tax_amount > 0 {
+            let recipient = Self::tax_settlement_recipient(&env, milestone_index)?;
+            Self::pay_or_credit(&env, &token_client, &recipient, &record.tax_amount)?;
+            Self::publish_tax_paid(
+                &env,
+                milestone_index,
+                &recipient,
+                &meta.token,
+                record.tax_amount,
+            );
+        }
 
         env.events().publish(
             (symbol_short!("adtxrfd"),),
@@ -9203,6 +9573,17 @@ impl MilestoneEscrow {
                 &meta.freelancer,
                 &allocation.freelancer_payout,
             )?;
+        }
+        if record.tax_amount > 0 {
+            let recipient = Self::tax_settlement_recipient(&env, milestone_index)?;
+            Self::pay_or_credit(&env, &token_client, &recipient, &record.tax_amount)?;
+            Self::publish_tax_paid(
+                &env,
+                milestone_index,
+                &recipient,
+                &meta.token,
+                record.tax_amount,
+            );
         }
 
         env.events().publish(

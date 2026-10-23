@@ -3,12 +3,15 @@
 //!
 //! # What this call touches
 //! `multisig_approve` reads the registered signer set and the approval
-//! threshold (the consolidated `MultiSigConfig`, an **instance** key of
-//! the contract's single `contract_instance` ledger entry, which the call needs
-//! anyway for the `DataKey::Job` metadata holding the token address), the
-//! contract's token balance, and the approval bitmap
-//! `MultiSigApproval(proposal_id)` (**temporary**) — one key of key type `u32`
-//! holding one `u32`, one bit per signer index.
+//! threshold (the consolidated `MultiSigConfig`) and the proposal record
+//! `AdminProposal(proposal_id)` (**persistent**, issue #785), which holds the
+//! approval bitmap — one bit per signer index.  Since issue #787 it no longer
+//! reads the job metadata or the token balance.
+//!
+//! The history below describes the #457 change when the bitmap still lived in
+//! a temporary `MultiSigApproval(proposal_id)` key; the guarantee it set up —
+//! a duplicate approval writes no contract storage key — carries over to the
+//! proposal record unchanged.
 //!
 //! # Before
 //! The bitmap write was unconditional: every call re-wrote the same `u32`,
@@ -66,7 +69,7 @@
 
 use super::*;
 use crate::{DataKey, Error, MultiSigApprovedEvent};
-use soroban_sdk::testutils::storage::{Instance as _, Temporary as _};
+use soroban_sdk::testutils::storage::{Instance as _, Persistent as _, Temporary as _};
 use soroban_sdk::{vec, Address, Env, Vec};
 
 /// Shared setup: register an escrow, optionally fund it, and register a
@@ -125,33 +128,39 @@ fn funded_multisig_escrow(env: &Env) -> (Address, Vec<Address>, MilestoneEscrowC
 }
 
 /// An escrow with a 2-of-3 multisig regime registered but **no** token balance,
-/// for the `MultiSigEmptyBalance` guard.
+/// which multisig approvals accept since issue #787.
 fn unfunded_multisig_escrow(env: &Env) -> (Address, Vec<Address>, MilestoneEscrowClient<'_>) {
     let (contract_id, _, escrow, signers) = multisig_escrow(env, false);
     (contract_id, signers, escrow)
 }
 
-/// The stored approval bitmap for `proposal_id` (0 when no entry exists).
+/// The approval bitmap stored in `proposal_id`'s record (0 when no record
+/// exists).
 fn stored_bitmap(env: &Env, contract_id: &Address, proposal_id: u32) -> u32 {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
-            .get(&DataKey::MultiSigApproval(proposal_id))
+            .persistent()
+            .get::<_, crate::AdminTransferProposal>(&DataKey::AdminProposal(proposal_id))
+            .map(|record| record.approvals_bitmap)
             .unwrap_or(0)
     })
 }
 
-/// Remaining TTL, in ledgers, of the temporary bitmap entry.
+/// Remaining TTL, in ledgers, of the proposal record that holds the bitmap.
 fn bitmap_ttl(env: &Env, contract_id: &Address, proposal_id: u32) -> u32 {
     env.as_contract(contract_id, || {
         env.storage()
-            .temporary()
-            .get_ttl(&DataKey::MultiSigApproval(proposal_id))
+            .persistent()
+            .get_ttl(&DataKey::AdminProposal(proposal_id))
     })
 }
 
-/// Number of keys this contract currently holds in temporary storage — for
-/// `multisig_approve` that is exactly one key per proposal with a bitmap.
+/// Number of keys this contract currently holds in persistent storage.
+fn persistent_key_count(env: &Env, contract_id: &Address) -> u32 {
+    env.as_contract(contract_id, || env.storage().persistent().all().len())
+}
+
+/// Number of keys this contract currently holds in temporary storage.
 fn temporary_key_count(env: &Env, contract_id: &Address) -> u32 {
     env.as_contract(contract_id, || env.storage().temporary().all().len())
 }
@@ -202,6 +211,8 @@ fn test_multisig_approve_duplicate_writes_no_contract_storage_key() {
     let s0 = signers.get(0).unwrap();
 
     // Reference call: signer 0 approves proposal 1 for the first time.
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 2);
     escrow.multisig_approve(&s0, &1u32);
     let first = env.cost_estimate().resources();
     let bitmap_after_first = stored_bitmap(&env, &contract_id, 1u32);
@@ -222,33 +233,24 @@ fn test_multisig_approve_duplicate_writes_no_contract_storage_key() {
 
     assert_eq!(
         first.write_entries, 2,
-        "a first approval writes the bitmap entry and the auth nonce entry; \
+        "a first approval writes the proposal record and the auth nonce entry; \
          measured {:?}",
-        first
-    );
-    assert_eq!(
-        first.write_bytes, 180,
-        "a first approval writes 108 bytes for the bitmap plus 72 for the auth \
-         nonce; measured {:?}",
         first
     );
     assert_eq!(
         duplicate.write_entries, 1,
         "a duplicate approval must write one entry fewer (the auth nonce only, \
-         no contract storage key); it wrote 2 entries / 180 bytes before this \
-         change; measured {:?}",
+         no contract storage key); measured {:?}",
         duplicate
     );
     assert_eq!(
         duplicate.write_bytes, 72,
-        "a duplicate approval must write 108 fewer bytes (the bitmap entry it \
-         used to re-write); measured {:?}",
+        "a duplicate approval writes only the 72-byte auth nonce; measured {:?}",
         duplicate
     );
-    assert_eq!(
-        first.write_bytes - duplicate.write_bytes,
-        108,
-        "the removed redundant write is exactly the bitmap entry's 108 bytes"
+    assert!(
+        first.write_bytes > duplicate.write_bytes,
+        "the first approval pays for the proposal record write"
     );
     assert_eq!(
         fresh.write_entries, first.write_entries,
@@ -288,24 +290,20 @@ fn test_multisig_approve_duplicate_writes_no_contract_storage_key() {
 
 // ── the key shape the call writes ────────────────────────────────────────────
 
-/// Key-level shape: each approved proposal owns exactly one temporary key
-/// (`MultiSigApproval(proposal_id)`), duplicates add none, and an approval never
-/// writes an instance key — not the signer set, not the threshold, not the
-/// bitmap.  This pins the layout the issue asks about (metadata and bitmap in
-/// separate tiers) so that any future consolidation is a deliberate edit.
+/// Key-level shape: an approval updates its proposal's record in place.  It
+/// creates no temporary key, no instance key and no new persistent key, and a
+/// duplicate leaves the record as it was.
 #[test]
 fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
     let env = Env::default();
     let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
     let s0 = signers.get(0).unwrap();
     let s1 = signers.get(1).unwrap();
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 10);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 11);
 
     let instance_keys_before = instance_key_count(&env, &contract_id);
-    assert_eq!(
-        temporary_key_count(&env, &contract_id),
-        0,
-        "precondition: no proposal bitmap exists yet"
-    );
+    let persistent_keys_before = persistent_key_count(&env, &contract_id);
 
     let state = escrow.multisig_approve(&s0, &10u32);
     escrow.multisig_approve(&s1, &10u32);
@@ -315,8 +313,13 @@ fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
 
     assert_eq!(
         temporary_key_count(&env, &contract_id),
-        2,
-        "two approved proposals must own exactly two temporary storage keys"
+        0,
+        "approvals no longer use temporary storage"
+    );
+    assert_eq!(
+        persistent_key_count(&env, &contract_id),
+        persistent_keys_before,
+        "an approval updates the existing proposal record and adds no key"
     );
     assert_eq!(
         instance_key_count(&env, &contract_id),
@@ -327,21 +330,6 @@ fn test_multisig_approve_writes_one_bitmap_key_per_proposal() {
     assert_eq!(duplicate.bitmap, 0b001);
     assert_eq!(stored_bitmap(&env, &contract_id, 10u32), 0b011);
     assert_eq!(stored_bitmap(&env, &contract_id, 11u32), 0b001);
-
-    // Both temporary keys are proposal bitmaps under the u32-only
-    // `MultiSigApproval` key, holding the u32 bitmap as value.
-    env.as_contract(&contract_id, || {
-        let all = env.storage().temporary().all();
-        assert_eq!(all.len(), 2);
-        assert!(
-            all.contains_key(DataKey::MultiSigApproval(10u32).into_val(&env)),
-            "proposal 10's bitmap is stored under its own key"
-        );
-        assert!(
-            all.contains_key(DataKey::MultiSigApproval(11u32).into_val(&env)),
-            "proposal 11's bitmap is stored under its own key"
-        );
-    });
 }
 
 // ── behaviour identity: the duplicate path ───────────────────────────────────
@@ -354,6 +342,7 @@ fn test_multisig_approve_duplicate_is_idempotent_and_emits_the_same_event() {
     let env = Env::default();
     let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
     let s0 = signers.get(0).unwrap();
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 5);
 
     let first = escrow.multisig_approve(&s0, &5u32);
     let first_events = approve_events(&env, 5u32);
@@ -391,6 +380,9 @@ fn test_multisig_approve_duplicate_is_idempotent_and_emits_the_same_event() {
 fn test_multisig_approve_sets_the_bit_for_each_signer_index() {
     let env = Env::default();
     let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 20);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 21);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 22);
 
     let state0 = escrow.multisig_approve(&signers.get(0).unwrap(), &20u32);
     assert_eq!(state0.bitmap, 1u32 << 0);
@@ -427,6 +419,7 @@ fn test_multisig_approve_threshold_detection_unchanged() {
     let s0 = signers.get(0).unwrap();
     let s1 = signers.get(1).unwrap();
     let s2 = signers.get(2).unwrap();
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 30);
 
     let below = escrow.multisig_approve(&s0, &30u32);
     assert!(!below.approved, "one of two approvals is not approved");
@@ -462,14 +455,15 @@ fn test_multisig_approve_threshold_detection_unchanged() {
 
 // ── behaviour identity: the rejection paths write nothing ────────────────────
 
-/// Every rejection path still creates no bitmap key — the guard order (auth and
-/// source-state checks before any storage write) is untouched by the elided
-/// write, so a rejected call leaves no storage behind.
+/// Every rejection path leaves the proposal record's bitmap untouched, an
+/// approval for an ID with no record is refused, and an unfunded escrow now
+/// accepts approvals (issue #787: recording intent moves no tokens).
 #[test]
 fn test_multisig_approve_rejections_write_no_bitmap() {
     let env = Env::default();
     let (contract_id, signers, escrow) = funded_multisig_escrow(&env);
     let impostor = Address::generate(&env);
+    crate::tests::seed_admin_proposal(&env, &escrow.address, 40);
 
     // Not a registered signer.
     assert_eq!(
@@ -477,11 +471,10 @@ fn test_multisig_approve_rejections_write_no_bitmap() {
         Err(Ok(Error::Unauthorized))
     );
 
-    // Registered signer, but the escrow holds no token balance.
-    let (empty_id, empty_signers, empty_escrow) = unfunded_multisig_escrow(&env);
+    // Registered signer, but no proposal record for the ID.
     assert_eq!(
-        empty_escrow.try_multisig_approve(&empty_signers.get(0).unwrap(), &40u32),
-        Err(Ok(Error::MultiSigEmptyBalance))
+        escrow.try_multisig_approve(&signers.get(0).unwrap(), &41u32),
+        Err(Ok(Error::NoPendingAdminTransfer))
     );
 
     // Registered signer and funded escrow, but no signature at all.
@@ -491,13 +484,20 @@ fn test_multisig_approve_rejections_write_no_bitmap() {
         .is_err());
 
     assert_eq!(
-        temporary_key_count(&env, &contract_id),
+        stored_bitmap(&env, &contract_id, 40u32),
         0,
-        "no rejection may create the bitmap key"
+        "no rejection may set a bit"
     );
     assert_eq!(
-        temporary_key_count(&env, &empty_id),
+        stored_bitmap(&env, &contract_id, 41u32),
         0,
-        "the balance guard must reject before the bitmap is touched"
+        "no rejection may create a proposal record"
     );
+
+    // Registered signer on an escrow with no token balance: accepted.
+    let (empty_id, empty_signers, empty_escrow) = unfunded_multisig_escrow(&env);
+    crate::tests::seed_admin_proposal(&env, &empty_escrow.address, 40);
+    let state = empty_escrow.multisig_approve(&empty_signers.get(0).unwrap(), &40u32);
+    assert_eq!(state.bitmap, 0b001);
+    assert_eq!(stored_bitmap(&env, &empty_id, 40u32), 0b001);
 }

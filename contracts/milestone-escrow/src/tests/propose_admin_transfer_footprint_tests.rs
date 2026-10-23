@@ -60,8 +60,8 @@ fn test_propose_admin_transfer_does_not_require_version_key() {
     assert!(!version_present);
 
     let client = MilestoneEscrowClient::new(&env, &contract_id);
-    let result = client.try_propose_admin_transfer(&admin, &new_admin, &1u32);
-    assert_eq!(result, Ok(Ok(())));
+    let result = client.try_propose_admin_transfer(&admin, &new_admin);
+    assert_eq!(result, Ok(Ok(1)));
 
     let pending: PendingAdminTransfer = env.as_contract(&contract_id, || {
         env.storage()
@@ -86,7 +86,7 @@ fn test_propose_admin_transfer_uninitialized_still_rejected() {
     let contract_id = env.register(MilestoneEscrow, ());
     let client = MilestoneEscrowClient::new(&env, &contract_id);
 
-    let result = client.try_propose_admin_transfer(&admin, &new_admin, &1u32);
+    let result = client.try_propose_admin_transfer(&admin, &new_admin);
     assert_eq!(result, Err(Ok(Error::NotInitialized)));
 }
 
@@ -108,7 +108,7 @@ fn test_propose_admin_transfer_wrong_admin_still_unauthorized() {
 
     let client = MilestoneEscrowClient::new(&env, &contract_id);
     let attacker = Address::generate(&env);
-    let result = client.try_propose_admin_transfer(&attacker, &new_admin, &1u32);
+    let result = client.try_propose_admin_transfer(&attacker, &new_admin);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
     let pending_present: bool = env.as_contract(&contract_id, || {
@@ -148,15 +148,15 @@ fn test_propose_admin_transfer_happy_path_unaffected() {
     );
 
     let new_admin = Address::generate(&env);
-    let result = client.try_propose_admin_transfer(&admin, &new_admin, &9u32);
-    assert_eq!(result, Ok(Ok(())));
+    let result = client.try_propose_admin_transfer(&admin, &new_admin);
+    assert_eq!(result, Ok(Ok(1)));
 
     let pending = client.get_pending_admin_transfer().unwrap();
     assert_eq!(pending.new_admin, new_admin);
-    assert_eq!(pending.proposal_id, 9u32);
+    assert_eq!(pending.proposal_id, 1u32);
 
     // A second proposal is still blocked while one is pending.
     let other = Address::generate(&env);
-    let blocked = client.try_propose_admin_transfer(&admin, &other, &10u32);
+    let blocked = client.try_propose_admin_transfer(&admin, &other);
     assert_eq!(blocked, Err(Ok(Error::AdminTransferPending)));
 }
