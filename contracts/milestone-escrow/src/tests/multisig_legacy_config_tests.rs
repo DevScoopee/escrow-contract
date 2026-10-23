@@ -9,7 +9,7 @@
 //! exactly that layout and check that the multisig regime keeps working and
 //! cannot be re-initialised.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error, MultiSigConfig};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{vec, Address, Env, Vec};
@@ -19,7 +19,8 @@ fn escrow_with_legacy_multisig(
     env: &Env,
 ) -> (Address, crate::MilestoneEscrowClient<'_>, Vec<Address>) {
     env.mock_all_auths();
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    let fx = EscrowFixture::new(env).funded().build();
+    let (contract_id, escrow) = (fx.contract_id, fx.escrow);
     let signers = vec![env, Address::generate(env), Address::generate(env)];
     env.as_contract(&contract_id, || {
         let storage = env.storage().instance();

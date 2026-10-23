@@ -19,9 +19,9 @@
 //! `get_job` (or the shared helpers it calls) will change the snapshot and fail
 //! this test.
 
-use crate::test::setup_funded_escrow;
-use crate::{Error, MilestoneEscrow, MilestoneEscrowClient};
-use soroban_sdk::{vec, Env};
+use crate::testutils::EscrowFixture;
+use crate::{Error, MilestoneEscrowClient};
+use soroban_sdk::Env;
 
 /// Call `get_job` twice between two whole-ledger snapshots and assert that
 /// nothing changed and no event was published.
@@ -43,33 +43,36 @@ fn assert_get_job_is_read_only(env: &Env, escrow: &MilestoneEscrowClient<'_>) {
 #[test]
 fn get_job_does_not_mutate_ledger() {
     let env = Env::default();
-    env.mock_all_auths();
-    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1_000, 2_000])
+        .funded()
+        .build();
 
-    assert_get_job_is_read_only(&env, &escrow);
+    assert_get_job_is_read_only(&env, &fx.escrow);
 }
 
 #[test]
 fn get_job_does_not_mutate_ledger_after_milestone_progression() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, freelancer, _, _, _, _, escrow) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000]);
-    escrow.mark_delivered(&freelancer, &0);
-    escrow.approve_milestone(&client, &0);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1_000, 2_000])
+        .funded()
+        .build();
+    fx.escrow.mark_delivered(&fx.freelancer, &0);
+    fx.escrow.approve_milestone(&fx.client, &0);
 
-    assert_get_job_is_read_only(&env, &escrow);
+    assert_get_job_is_read_only(&env, &fx.escrow);
 }
 
 #[test]
 fn get_job_on_uninitialized_contract_returns_not_initialized_without_mutation() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let escrow = MilestoneEscrowClient::new(&env, &contract_id);
+    let fx = EscrowFixture::new(&env).uninitialized().build();
 
     let before = env.to_ledger_snapshot();
     assert!(matches!(
-        escrow.try_get_job(),
+        fx.escrow.try_get_job(),
         Err(Ok(Error::NotInitialized))
     ));
     let after = env.to_ledger_snapshot();

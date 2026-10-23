@@ -12,10 +12,10 @@
 //! `.extend_ttl(` added to `get_reputation` fails these tests, and the
 //! metering test additionally pins that the call writes zero entries.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{DataKey, Error, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::testutils::{EnvTestConfig, Ledger as _};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 /// Snapshot the ledger, call `get_reputation`, snapshot again, and assert
 /// the ledger is unchanged and no event was published.
@@ -36,8 +36,9 @@ fn assert_read_only(env: &Env, escrow: &MilestoneEscrowClient<'_>, address: &Add
 fn get_reputation_absent_entry_does_not_mutate_ledger() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, freelancer, arbiter, admin, _, _, escrow) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client, freelancer, arbiter, admin, escrow) =
+        (fx.client, fx.freelancer, fx.arbiter, fx.admin, fx.escrow);
 
     for address in [client, freelancer, arbiter, admin, Address::generate(&env)] {
         assert_eq!(assert_read_only(&env, &escrow, &address), 0);
@@ -48,8 +49,8 @@ fn get_reputation_absent_entry_does_not_mutate_ledger() {
 fn get_reputation_populated_entry_does_not_mutate_ledger() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, freelancer, _, _, _, _, escrow) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client, freelancer, escrow) = (fx.client, fx.freelancer, fx.escrow);
     escrow.mark_delivered(&freelancer, &0);
     escrow.approve_milestone(&client, &0);
 
@@ -62,7 +63,8 @@ fn get_reputation_populated_entry_does_not_mutate_ledger() {
 fn get_reputation_max_counter_does_not_mutate_ledger() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (contract_id, escrow) = (fx.contract_id, fx.escrow);
     let holder = Address::generate(&env);
     env.as_contract(&contract_id, || {
         env.storage()
@@ -79,8 +81,8 @@ fn get_reputation_max_counter_does_not_mutate_ledger() {
 fn get_reputation_does_not_extend_ttl() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, freelancer, _, _, _, _, escrow) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client, freelancer, escrow) = (fx.client, fx.freelancer, fx.escrow);
     escrow.mark_delivered(&freelancer, &0);
     escrow.approve_milestone(&client, &0);
     env.ledger().with_mut(|li| li.sequence_number += 100);
@@ -93,8 +95,8 @@ fn get_reputation_does_not_extend_ttl() {
 fn repeated_get_reputation_calls_are_stable() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, freelancer, _, _, _, _, escrow) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client, freelancer, escrow) = (fx.client, fx.freelancer, fx.escrow);
     escrow.mark_delivered(&freelancer, &0);
     escrow.approve_milestone(&client, &0);
 
@@ -127,7 +129,8 @@ fn get_reputation_metered_write_entries_is_zero() {
         capture_snapshot_at_drop: false,
     });
     env.mock_all_auths();
-    let (client, _, _, _, _, _, escrow) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client, escrow) = (fx.client, fx.escrow);
 
     escrow.get_reputation(&client);
     let resources = env.cost_estimate().resources();

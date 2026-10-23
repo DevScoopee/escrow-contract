@@ -8,18 +8,21 @@
 //! `test.rs` was rewritten, and nothing replaced them, leaving a public
 //! contract function untested while its snapshots stayed behind.
 
-use crate::test::setup_funded_escrow;
+use crate::testutils::EscrowFixture;
 use crate::{Error, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{vec, Address, Env};
+use soroban_sdk::{Address, Env};
 
 #[test]
 fn test_reputation_tracking() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128, 500_i128]);
+    let fx = EscrowFixture::new(&env)
+        .milestones(&[1_000_i128, 500_i128])
+        .funded()
+        .build();
+    let (client_addr, freelancer_addr, client) = (fx.client, fx.freelancer, fx.escrow);
 
     // Nobody has a reputation before a milestone is released.
     assert_eq!(client.get_reputation(&client_addr), 0);
@@ -45,8 +48,8 @@ fn test_reputation_unknown_address_is_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, client) = (fx.client, fx.freelancer, fx.escrow);
 
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_milestone(&client_addr, &0u32);
@@ -64,8 +67,8 @@ fn test_reputation_auto_release() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, client) = (fx.client, fx.freelancer, fx.escrow);
 
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -87,8 +90,8 @@ fn test_reputation_not_incremented_on_failed_release() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, _, _, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let fx = EscrowFixture::new(&env).funded().build();
+    let (client_addr, freelancer_addr, client) = (fx.client, fx.freelancer, fx.escrow);
 
     // Approving a milestone that was never delivered must fail...
     assert!(client.try_approve_milestone(&client_addr, &0u32).is_err());
