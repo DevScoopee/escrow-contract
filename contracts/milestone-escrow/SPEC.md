@@ -103,7 +103,7 @@ stateDiagram-v2
 | Acceptance | `DataKey::Acceptance` (bit 1 freelancer, bit 2 arbiter) | `accept_job`, `accept_arbiter` | never | `mark_delivered`, `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` (`NotAccepted`), `withdraw_unaccepted` |
 | Emergency pause | `DataKey::Ep` | `emergency_pause`, `emergency_pause_admin_override` | `emergency_unpause`, `emergency_pause_admin_override` | `ensure_not_paused` and the calculators listed below |
 | Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `assert_not_paused` |
-| Cancel approval | `DataKey::CancelApproval` | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party) | `cancel_escrow`, `revoke_cancel_approval` |
+| Cancel approval | `DataKey::CancelApproval` (`CancelApprovalRecord`: `mask` + `approved_at`) | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party), expiry after `CANCEL_APPROVAL_TTL_SECONDS` | `cancel_escrow`, `revoke_cancel_approval` |
 | Cancel lock | `DataKey::CancelLock` | `cancel_escrow` (second party) | `admin_override_cancel_release`, `admin_override_cancel_refund` | `ensure_not_paused` |
 | Multisig lock | `DataKey::MultisigLocked` | `multisig_lock` | `multisig_admin_override_release`, `multisig_admin_override_refund` | the multisig override and split endpoints |
 | Tax record | `DataKey::TaxWithholdingLock(i)` | `tax_withholding_deductions` | `admin_override_tax_release`, `admin_override_tax_refund`, `admin_override_tax_split_refund` | the tax override endpoints |
@@ -173,10 +173,19 @@ outlives the dispute it belongs to.
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `cancel_escrow` | client or freelancer | not emergency paused; not cancel locked; funded; positive balance; caller has not already approved | n/a | records approval; second party sets `CancelLock` | none | `cxlappr`, or `cancel` when locked |
+| `cancel_escrow` | client or freelancer | not emergency paused; not cancel locked; funded; positive balance; caller has not already approved an unexpired round | n/a | records (or refreshes) a first approval with `approved_at`; second approval inside the TTL sets `CancelLock` | none | `cxlappr` (mask + `approved_at`), or `cancel` when locked |
 | `revoke_cancel_approval` | client or freelancer | not cancel locked; caller has approved | n/a | clears caller's approval | none | `cancelrev` |
 | `admin_override_cancel_release` | admin | `CancelLock` set; funded | every milestone except `Released`, `Refunded` | `Released`; clears `CancelLock`; resets `YieldAccrued` | → freelancer, sum of remaining | `adcovls` |
 | `admin_override_cancel_refund` | admin | `CancelLock` set; funded | every milestone except `Released`, `Refunded` | `Refunded`; clears `CancelLock` and `YieldAccrued` | → client, sum of remaining | `adcovrf` |
+
+Cancellation is a two-party handshake: one party approves, the `CancelLock` only
+fires when the other party approves too. A single-party approval is valid for
+`CANCEL_APPROVAL_TTL_SECONDS` (7 days) from `approved_at`. Once that age is
+reached the approval is treated as absent (#713): the next `cancel_escrow` call
+records a fresh first approval under the caller's bit, restarts `approved_at` at
+the current ledger timestamp, and does **not** set the lock. The stale bit is
+overwritten, so the original approver must opt in again. `cxlappr` carries
+`approved_at` so indexers can compute the same deadline off-chain.
 
 ### Admin overrides
 
@@ -280,6 +289,10 @@ change no milestone or escrow state.
      `extend_milestone_deadline` are rejected.
    - `withdraw` is not gated by any pause, so owed balances can always be
      claimed.
+7. **Stale cancel intent never locks.** A single-party cancel approval expires
+   `CANCEL_APPROVAL_TTL_SECONDS` after it was recorded. `cancel_escrow` treats an
+   expired approval as absent, so the lock can only ever be completed by two
+   approvals made within the same 7-day window.
 
 ## Read-only endpoints
 

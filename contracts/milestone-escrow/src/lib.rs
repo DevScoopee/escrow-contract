@@ -44,6 +44,19 @@ pub const DISPUTE_TIMEOUT_SECONDS: u64 = 30 * 24 * 60 * 60;
 /// its worst-case CPU cost along with the per-milestone storage writes.
 const MAX_BATCH_APPROVALS: u32 = 10;
 
+/// Maximum age of a single-party cancel approval, in seconds (7 days).
+///
+/// `cancel_escrow` is a two-party handshake: the first party records its intent
+/// and the counter-party completes the `CancelLock`.  Without an expiry that
+/// intent never dies, so an approval recorded in week one during a
+/// disagreement could be completed months later — after the parties made up and
+/// kept working — freezing the escrow on stale intent (issue #713).
+///
+/// Once an approval reaches this age it is treated as absent: the next
+/// `cancel_escrow` call records a fresh first approval instead of locking, and
+/// the TTL window restarts from that call's ledger timestamp.
+pub const CANCEL_APPROVAL_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -406,11 +419,14 @@ pub enum DataKey {
     TimeExt(u32),
     /// Instance key for the cancel_escrow lock.
     CancelLock,
-    /// Persistent: bitmask recording which parties have approved a pending
-    /// cancel-escrow request.  Bit 0 (value 1) = client has approved;
-    /// bit 1 (value 2) = freelancer has approved.  Written by `cancel_escrow`
-    /// when a party signals intent, cleared when both bits are set (lock fires)
-    /// or when `revoke_cancel_approval` removes a party's bit.
+    /// Persistent: the pending single-party cancel approval, stored as a
+    /// [`CancelApprovalRecord`] holding both the bitmask and the ledger
+    /// timestamp at which the round started.  Bit 0 (value 1) = client has
+    /// approved; bit 1 (value 2) = freelancer has approved.  Written by
+    /// `cancel_escrow` when a party signals intent, cleared when both bits are
+    /// set (lock fires) or when `revoke_cancel_approval` removes a party's bit.
+    /// A record older than [`CANCEL_APPROVAL_TTL_SECONDS`] is treated as absent
+    /// by `cancel_escrow` (issue #713).
     CancelApproval,
     // ── tax_withholding_deductions storage keys ──────────────────────────────
     /// Persistent: tax rate in basis points (1 bp = 0.01 %) set by
@@ -1002,6 +1018,26 @@ pub struct CancelEscrowInitiatedEvent {
     pub total_amount: i128,
 }
 
+/// Stored under `DataKey::CancelApproval` between the first and the second
+/// `cancel_escrow` approval.
+///
+/// Carries the ledger timestamp at which the approval round started so that an
+/// approval older than [`CANCEL_APPROVAL_TTL_SECONDS`] can be expired instead of
+/// being completed by the counter-party (issue #713).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancelApprovalRecord {
+    /// Bitmask of the approvals recorded so far.
+    /// bit 0 (value 1) = client approved, bit 1 (value 2) = freelancer approved.
+    /// A stored record only ever holds an unexpired, single-party approval,
+    /// because the second approval fires the lock and clears the record.
+    pub mask: u32,
+    /// Ledger timestamp of the round's first approval.  The approval expires
+    /// `CANCEL_APPROVAL_TTL_SECONDS` after this instant, and a fresh round
+    /// restarts the window at its own first approval.
+    pub approved_at: u64,
+}
+
 /// Emitted by `cancel_escrow` when a party records their cancellation approval
 /// but the counter-party has not yet approved (single-signature stage).
 /// Lets indexers track partial cancel intent without treating it as a finalized
@@ -1014,6 +1050,10 @@ pub struct CancelApprovalRecordedEvent {
     /// Current bitmask after recording this approval.
     /// bit 0 = client approved, bit 1 = freelancer approved.
     pub approval_mask: u32,
+    /// Ledger timestamp of the round's first approval — the instant the
+    /// `CANCEL_APPROVAL_TTL_SECONDS` window started.  Lets indexers tell a
+    /// live approval from one that will silently expire.
+    pub approved_at: u64,
 }
 
 /// Emitted by `revoke_cancel_approval` when a party withdraws their
@@ -5832,7 +5872,8 @@ impl MilestoneEscrow {
     /// override.
     ///
     /// The first caller (client or freelancer) records their approval in a
-    /// persistent `CancelApproval` bitmask and emits `CancelApprovalRecordedEvent`.
+    /// persistent [`CancelApprovalRecord`] and emits
+    /// `CancelApprovalRecordedEvent` with the round's `approved_at` timestamp.
     /// The `CancelLock` is **not** set on a single-signature call — both parties
     /// must call before the escrow is frozen.  This prevents either party from
     /// unilaterally locking the other out.
@@ -5840,6 +5881,14 @@ impl MilestoneEscrow {
     /// Once the second party calls, both bits in the mask are set, the
     /// `CancelLock` is activated, the approval record is cleared, and the
     /// `CancelEscrowInitiatedEvent` is emitted.
+    ///
+    /// # Expiry (issue #713)
+    /// An approval is only valid for [`CANCEL_APPROVAL_TTL_SECONDS`] (7 days).
+    /// A call made at or after that age treats the stored approval as absent:
+    /// it records a fresh first approval under the caller's own bit and
+    /// restarts the TTL window at the current ledger timestamp instead of
+    /// completing the lock.  This stops a forgotten approval from freezing the
+    /// escrow months after the disagreement it expressed was resolved.
     ///
     /// # Parameters
     /// * `caller` – Must be either the job's client or freelancer.
@@ -5850,8 +5899,8 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `caller` is neither the client nor the freelancer.
     /// * `NotFunded`      – The escrow has not been funded yet.
     /// * `EscrowLocked`   – Both parties already approved; lock is already active.
-    /// * `InvalidStatus`  – `caller` has already recorded their approval in this
-    ///                      round (duplicate single-party call).
+    /// * `InvalidStatus`  – `caller` has already recorded an unexpired approval
+    ///                      in this round (duplicate single-party call).
     pub fn cancel_escrow(env: Env, caller: Address) -> Result<(), Error> {
         let zero_account = Address::from_str(
             &env,
@@ -5902,17 +5951,26 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
+        let now = env.ledger().timestamp();
         let bit = if caller == meta.client { 1u32 } else { 2u32 };
-        let current_mask = env
-            .storage()
-            .instance()
-            .get::<_, u32>(&DataKey::CancelApproval)
-            .unwrap_or(0);
-        if current_mask & bit != 0 {
+        let stored: Option<CancelApprovalRecord> =
+            env.storage().instance().get(&DataKey::CancelApproval);
+        // Approvals older than the TTL are treated as absent (issue #713): the
+        // record is folded down to "no live approvals", so this call starts a
+        // fresh round instead of completing a lock on stale intent.
+        let live_mask = match stored {
+            Some(record)
+                if now.saturating_sub(record.approved_at) < CANCEL_APPROVAL_TTL_SECONDS =>
+            {
+                record.mask
+            }
+            _ => 0,
+        };
+        if live_mask & bit != 0 {
             return Err(Error::InvalidStatus);
         }
 
-        let new_mask = current_mask | bit;
+        let new_mask = live_mask | bit;
         if new_mask == 3 {
             env.storage().instance().remove(&DataKey::CancelApproval);
             env.storage().instance().set(&DataKey::CancelLock, &true);
@@ -5932,15 +5990,22 @@ impl MilestoneEscrow {
             return Ok(());
         }
 
-        env.storage()
-            .instance()
-            .set(&DataKey::CancelApproval, &new_mask);
+        // `new_mask != 3` means no live approval survived, so this is the first
+        // approval of a fresh round and the TTL window starts now.
+        env.storage().instance().set(
+            &DataKey::CancelApproval,
+            &CancelApprovalRecord {
+                mask: new_mask,
+                approved_at: now,
+            },
+        );
         env.events().publish(
             (symbol_short!("cxlappr"),),
             CancelApprovalRecordedEvent {
                 contract_id: env.current_contract_address(),
                 caller,
                 approval_mask: new_mask,
+                approved_at: now,
             },
         );
 
@@ -5951,13 +6016,18 @@ impl MilestoneEscrow {
     /// second-party lock is set.
     ///
     /// # Storage footprint
-    /// The approval record is a compact `u32` bitmask under the instance key
-    /// `DataKey::CancelApproval`.  A stored mask only ever holds a single
-    /// party's bit (both bits together fire the lock and clear the record in
-    /// `cancel_escrow`), so revoking always leaves the mask empty and the key
-    /// is **removed** rather than rewritten as a zero mask.  After a
-    /// successful revoke the instance storage is byte-identical to its state
-    /// before the approval was first recorded.
+    /// The approval record is a [`CancelApprovalRecord`] (`mask` plus
+    /// `approved_at`) under the instance key `DataKey::CancelApproval`.  A
+    /// stored mask only ever holds a single party's bit (both bits together
+    /// fire the lock and clear the record in `cancel_escrow`), so revoking
+    /// always leaves the mask empty and the key is **removed** rather than
+    /// rewritten as a zero mask.  After a successful revoke the instance
+    /// storage is byte-identical to its state before the approval was first
+    /// recorded.
+    ///
+    /// Revoking an approval that has already expired (#713) is still allowed:
+    /// the bit is present in storage until something clears it, and removing it
+    /// restores the pre-approval footprint.
     ///
     /// # Errors
     /// * `InvalidAddress` – `caller` is a zero address.
@@ -6000,11 +6070,14 @@ impl MilestoneEscrow {
         }
 
         let bit = if caller == meta.client { 1u32 } else { 2u32 };
-        let current_mask = env
+        let (current_mask, approved_at) = match env
             .storage()
             .instance()
-            .get::<_, u32>(&DataKey::CancelApproval)
-            .unwrap_or(0);
+            .get::<_, CancelApprovalRecord>(&DataKey::CancelApproval)
+        {
+            Some(record) => (record.mask, record.approved_at),
+            None => (0u32, 0u64),
+        };
         if current_mask & bit == 0 {
             return Err(Error::InvalidStatus);
         }
@@ -6013,9 +6086,13 @@ impl MilestoneEscrow {
         if new_mask == 0 {
             env.storage().instance().remove(&DataKey::CancelApproval);
         } else {
-            env.storage()
-                .instance()
-                .set(&DataKey::CancelApproval, &new_mask);
+            env.storage().instance().set(
+                &DataKey::CancelApproval,
+                &CancelApprovalRecord {
+                    mask: new_mask,
+                    approved_at,
+                },
+            );
         }
 
         env.events().publish(
