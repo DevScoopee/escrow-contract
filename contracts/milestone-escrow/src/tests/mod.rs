@@ -103,6 +103,7 @@ mod tax_withholding_tests;
 mod test_emergency_pause;
 mod test_payment_streaming_milestones;
 pub(crate) mod testutils;
+mod time_ext_persistence_tests;
 mod time_until_auto_release_tests;
 mod trigger_auto_release_tests;
 mod unlock_escrow_interest_yield_event_tests;

@@ -1238,7 +1238,7 @@ impl MilestoneEscrow {
         let new_deadline = Self::auto_release_deadline(&meta, delivered_at, new_extension)?;
 
         env.storage()
-            .temporary()
+            .persistent()
             .set(&DataKey::TimeExt(milestone_index), &new_extension);
 
         env.events().publish(
