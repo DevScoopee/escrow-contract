@@ -21,6 +21,7 @@ mod admin_override_streaming_release_tests;
 mod admin_pause_escrow_tests;
 mod admin_proposal_binding_tests;
 mod admin_resume_escrow_footprint_tests;
+mod admin_role_tests;
 mod admin_set_yield_rate_tests;
 mod admin_tax_withholding_guards_tests;
 mod admin_transfer_target_tests;

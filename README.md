@@ -17,6 +17,23 @@ The escrow's protection depends on **four distinct roles** assigned at deploy ti
 
 `__constructor` enforces party distinctness: it rejects any collision among `admin`, `client`, `freelancer`, and `arbiter` with `Error::InvalidParties`. This prevents the client from resolving their own disputes (arbiter == client), the freelancer from ruling in their own favour (arbiter == freelancer), or the client from holding every admin override (admin == client). The frontend must pass four genuinely distinct addresses — it must not reuse the connected wallet as both admin and client.
 
+### Administrative Roles
+
+The admin's powers are split into narrower roles (issue #761), so day-to-day
+keys need not hold upgrade or fund-moving rights. The root admin assigns each
+role with `set_admin_role`; until then the root admin holds it. Assigning the
+root admin's own address restores the default. `get_admin_role` returns the
+current holder, and [`AUTH.md`](contracts/milestone-escrow/AUTH.md) lists the
+role each function requires.
+
+| Role | Permissions |
+|---|---|
+| `Upgrader` | `upgrade`, `migrate`, `migrate_cold_config`. Use a cold key. |
+| `Operator` | Pause and resume, including the emergency pause controls. |
+| `FeeManager` | Fees, yield, tax settings and the token whitelist. |
+| `Resolver` | Admin overrides of stuck payouts, and multisig lock and setup. A cancel override (`admin_override_cancel_release` / `_refund`) is refused with `DisputeTimeoutNotReached` while any milestone's dispute is younger than the dispute timeout. |
+| root admin | Assigns roles, admin transfer (`transfer_admin`, `propose_admin_transfer`), signer-set changes (`propose_multisig_config`) and `sweep_excess`. |
+
 ## Arbiter Fee
 
 The constructor's `settings.arbiter_fee_bps` sets an arbiter fee (basis points, max 1,000 = 10 %). When an escrow has a fee, `resolve_dispute` and `apply_dispute_arbitration_split` first pay that share of the disputed milestone's remaining balance to the arbiter, then pay or split the rest between client and freelancer. The fee is fixed at construction; `0` means no fee, and milestones that never go to dispute never pay one (#738).
@@ -101,6 +118,8 @@ The contract exposes **94 public functions** grouped by category below.
 | Function | Caller | Description |
 |---|---|---|
 | `transfer_admin` | Admin | Transfer admin role |
+| `set_admin_role` | Admin | Assign an administrative role (Upgrader, Operator, FeeManager, Resolver) |
+| `get_admin_role` | Anyone | Current holder of a role |
 | `add_whitelisted_token` | Admin | Add token to whitelist |
 | `remove_whitelisted_token` | Admin | Remove token from whitelist |
 | `is_token_whitelisted` | Anyone | Check if token is whitelisted |
