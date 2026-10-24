@@ -681,7 +681,7 @@ fn transfer_admin_rejects_too_many_ratios() {
     }
     assert_eq!(
         try_transfer(&env, &ctx, 1_000, &ratios),
-        Err(Error::InvalidAmount)
+        Err(Error::TooManyParties)
     );
 }
 

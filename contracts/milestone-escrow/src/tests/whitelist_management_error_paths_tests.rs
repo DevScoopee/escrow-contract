@@ -163,7 +163,7 @@ fn add_rejects_when_whitelist_is_full() {
 
     assert_eq!(
         client.try_add_whitelisted_token(&admin_addr, &Address::generate(&env)),
-        Err(Ok(Error::InvalidAmount))
+        Err(Ok(Error::WhitelistFull))
     );
     assert_eq!(client.get_whitelisted_tokens(), full);
 }
@@ -284,7 +284,7 @@ fn remove_rejects_last_remaining_token() {
 
     assert_eq!(
         client.try_remove_whitelisted_token(&admin_addr, &token_contract_id),
-        Err(Ok(Error::InvalidAmount))
+        Err(Ok(Error::WhitelistMinimum))
     );
     assert_eq!(client.get_whitelisted_tokens(), before);
 }
