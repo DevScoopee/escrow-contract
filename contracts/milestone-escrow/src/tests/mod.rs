@@ -5535,18 +5535,23 @@ fn test_claim_auto_release_overflow_checked_math_returns_error() {
     let client = MilestoneEscrowClient::new(&env, &contract_id);
 
     let amounts = vec![&env, 5_000_i128];
-    // u64::MAX as auto_release_seconds guarantees delivered_at + u64::MAX
-    // wraps when delivered_at > 0.
     client.initialize(
         &admin_addr,
         &client_addr,
         &freelancer_addr,
         &arbiter_addr,
         &token_contract_id,
-        &u64::MAX,
+        &604_800u64,
         &amounts,
         &crate::spec_hashes_for(&amounts),
     );
+    // initialize caps auto_release_seconds, so write u64::MAX directly:
+    // delivered_at + u64::MAX then overflows whenever delivered_at > 0.
+    env.as_contract(&contract_id, || {
+        let mut meta = MilestoneEscrow::load_job_meta(&env).unwrap();
+        meta.auto_release_seconds = u64::MAX;
+        MilestoneEscrow::store_job_meta(&env, &meta);
+    });
     client.accept_job(&freelancer_addr);
     client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);

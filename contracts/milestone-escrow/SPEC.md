@@ -132,7 +132,7 @@ topic.
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `__constructor` | deployer | not initialized; valid addresses; non-empty positive amounts; `auto_release_seconds > 0` | none | every milestone `Pending` | none | `init` |
+| `__constructor` | deployer | not initialized; valid addresses; non-empty positive amounts; `0 < auto_release_seconds <= MAX_AUTO_RELEASE_SECONDS` (10 years) | none | every milestone `Pending` | none | `init` |
 | `fund` | client | `ensure_not_paused`; not funded | n/a | job `funded = true` | client → contract, total amount | `fund` |
 | `add_whitelisted_token` | admin | not funded; whitelist not full | n/a | n/a | none | `wtok` |
 | `remove_whitelisted_token` | admin | not funded; token present; not the last token | n/a | n/a | none | `wldel` |

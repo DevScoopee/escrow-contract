@@ -1171,8 +1171,8 @@ fn test_allocation_agrees_with_the_two_party_split_refund() {
 // #534 event, #535 storage footprint)
 // ============================================================================
 
-fn claim_refund_topic(env: &Env) -> Symbol {
-    Symbol::new(env, "emergency_pause_claim_refund")
+fn claim_refund_topic(_env: &Env) -> Symbol {
+    symbol_short!("epclaim")
 }
 
 /// Every `emergency_pause_claim_refund` event from the last invocation, as

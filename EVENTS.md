@@ -57,6 +57,7 @@ addresses as further topics, so RPC `getEvents` can filter by participant
 | `emunpause`| `EmergencyUnpausedEvent`         | state change      |
 | `emoverrid`| `EmergencyPauseAdminOverrideEvent` | state change    |
 | `epalloc`  | `EmergencyPauseAllocationEvent`  | calculation       |
+| `epclaim`  | `EmergencyPauseClaimRefundEvent` | state change      |
 | `admin`    | `TransferAdminEvent`             | state change      |
 | `adminprp` | `AdminTransferProposedEvent`     | state change      |
 | `admincxl` | `AdminTransferCancelledEvent`    | state change      |
