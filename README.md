@@ -38,6 +38,18 @@ role each function requires.
 
 The constructor's `settings.arbiter_fee_bps` sets an arbiter fee (basis points, max 1,000 = 10 %). When an escrow has a fee, `resolve_dispute` and `apply_dispute_arbitration_split` first pay that share of the disputed milestone's remaining balance to the arbiter, then pay or split the rest between client and freelancer. The fee is fixed at construction; `0` means no fee, and milestones that never go to dispute never pay one (#738).
 
+### What the admin can do
+
+- Pause and resume the escrow (`admin_pause_escrow`, `admin_resume_escrow`).
+- Override-release or override-refund a milestone **only when** the milestone is `Disputed` (arbiter unreachable or timed out) **or** the two-party cancel lock is active. Overriding a `Pending`, `Delivered`, or `PartiallyReleased` milestone that has no open dispute is rejected with `InvalidStatus`.
+- Override a streaming-release split on a `Disputed` milestone (`admin_override_streaming_release`).
+- Manage token whitelists and upgrades.
+
+### What the admin cannot do
+
+- Release or refund a milestone that has not been disputed and has no cancel lock active — the arbiter's role is preserved for normal settlement.
+- Act as a unilateral custodian: admin overrides require a genuine deadlock (dispute or cancel) before they fire.
+
 ## Contract Functions
 
 The contract exposes **94 public functions** grouped by category below.
