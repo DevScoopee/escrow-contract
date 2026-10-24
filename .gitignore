@@ -7,3 +7,4 @@ skills-lock.json
 issue.md
 dist/
 bindings/
+contracts/milestone-escrow/test_snapshots/

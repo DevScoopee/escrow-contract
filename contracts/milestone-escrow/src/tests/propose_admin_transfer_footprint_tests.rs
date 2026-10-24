@@ -104,6 +104,9 @@ fn test_propose_admin_transfer_wrong_admin_still_unauthorized() {
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Version, &1u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &crate::SCHEMA_VERSION);
     });
 
     let client = MilestoneEscrowClient::new(&env, &contract_id);

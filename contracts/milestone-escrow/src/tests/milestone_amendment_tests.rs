@@ -102,7 +102,6 @@ fn add_milestone_updates_balances_and_emits_event() {
     assert_eq!(topic_count(&env, symbol_short!("ms_add")), 1);
     let event: MilestoneAddedEvent = last_event_payload(&env);
     assert_eq!(event.total_amount, 3_500_i128);
-    assert_eq!(event.contract_id, contract_id);
     assert_eq!(event.client, client_addr);
     assert_eq!(event.freelancer, freelancer_addr);
     assert_eq!(event.milestone_index, 2);
@@ -246,7 +245,6 @@ fn reduce_milestone_refunds_difference_and_emits_event() {
     // recent contract invocation; any subsequent call would clear the log.
     assert_eq!(topic_count(&env, symbol_short!("ms_reduce")), 1);
     let event: MilestoneReducedEvent = last_event_payload(&env);
-    assert_eq!(event.contract_id, contract_id);
     assert_eq!(event.milestone_index, 0);
     assert_eq!(event.old_amount, 1_000);
     assert_eq!(event.new_amount, 600);

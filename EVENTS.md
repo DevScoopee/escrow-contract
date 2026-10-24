@@ -49,6 +49,7 @@ addresses as further topics, so RPC `getEvents` can filter by participant
 | `cxlappr`  | `CancelApprovalRecordedEvent`    | state change      |
 | `cancelrev`| `CancelApprovalRevokedEvent`     | state change      |
 | `upgrade`  | `ContractUpgradedEvent`          | state change      |
+| `migrate`  | `MigratedEvent`                  | state change      |
 | `wtok`     | `TokenWhitelistedEvent`          | state change      |
 | `wldel`    | `TokenRemovedEvent`              | state change      |
 | `pause`    | `EscrowPausedEvent`              | state change      |
@@ -72,6 +73,9 @@ addresses as further topics, so RPC `getEvents` can filter by participant
 | `adtwsplt` | `AdminOverrideTaxSplitRefundEvent` | calculation     |
 | `arbsplit` | `ArbitrationSplitAppliedEvent`   | calculation       |
 | `msiginit` | `MultisigApprovalInitEvent`      | state change      |
+| `msigcfgp` | `MultiSigConfigProposedEvent`    | state change      |
+| `msigcfg`  | `MultiSigConfigChangedEvent`     | state change      |
+| `msigcfgx` | `MultiSigConfigCancelledEvent`   | state change      |
 | `msigappr` | `MultiSigApprovedEvent`          | state change      |
 | `mslock`   | `MultisigLockedEvent`            | state change      |
 | `msadmrel` | `MultisigAdminOverrideReleaseEvent` | state change   |

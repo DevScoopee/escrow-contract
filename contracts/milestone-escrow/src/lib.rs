@@ -13,7 +13,7 @@
 )]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
-    ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
+    ContractExecutable, Env, IntoVal, Map, Symbol, TryFromVal, Val, Vec,
 };
 
 pub mod math;
@@ -213,6 +213,18 @@ pub enum Error {
     WhitelistMinimum = 49,
     /// A ratio vector exceeds the maximum allowed number of parties (255).
     TooManyParties = 50,
+    /// A state-changing endpoint was called on a deployment whose storage is
+    /// older than this code (`schema_version() < SCHEMA_VERSION`), i.e. after
+    /// `upgrade` but before `migrate`.  The admin must call `migrate` first.
+    MigrationRequired = 51,
+    /// `migrate` was called on storage that is already at `SCHEMA_VERSION`.
+    AlreadyMigrated = 52,
+    /// `propose_multisig_config` was called while another signer-set change
+    /// is pending; execute or cancel it first.
+    MultiSigConfigPending = 53,
+    /// `execute_multisig_config` / `cancel_multisig_config_proposal` found no
+    /// pending signer-set change.
+    NoPendingMultiSigConfig = 54,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -251,6 +263,17 @@ const SECONDS_PER_YEAR: i128 = 31_536_000;
 /// Basis-point denominator for interest math (`1 bp = 1 / 10_000`).
 const BPS_DENOMINATOR: i128 = 10_000;
 
+/// Storage layout this code reads and writes.  Bump it whenever a stored
+/// type changes shape, and teach `migrate` the step up from the previous
+/// layout.
+///
+/// * `1` – `Milestone` without `spec_hash`; whitelist, multisig, yield and fee
+///   configuration in instance storage.  Deployments that predate
+///   `DataKey::SchemaVersion` are read as this version.
+/// * `2` – `Milestone::spec_hash` (#767); that configuration in persistent
+///   storage (#772).
+pub const SCHEMA_VERSION: u32 = 2;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MilestoneStatus {
@@ -275,6 +298,18 @@ pub struct Milestone {
     /// committed at `initialize` (#767). Kept on the milestone itself so
     /// committing it costs no extra ledger write per milestone.
     pub spec_hash: BytesN<32>,
+}
+
+/// `Milestone` as stored by schema version 1, before `spec_hash` (#767).
+/// Only `migrate` reads it.
+#[contracttype]
+#[derive(Clone, Debug)]
+struct MilestoneV1 {
+    amount: i128,
+    released_amount: i128,
+    status: MilestoneStatus,
+    delivered_at: u64,
+    funded: bool,
 }
 
 /// Evidence attached to a dispute by one of the parties (#712).
@@ -675,6 +710,15 @@ pub enum DataKey {
     /// no fee, which is how every escrow created through `initialize` (and
     /// every escrow deployed before the fee existed) behaves.
     ArbiterFeeBps,
+    /// Instance: storage layout version (`SCHEMA_VERSION`) the stored entries
+    /// follow.  Written by `initialize` and `migrate`.  Absent on deployments
+    /// created before it existed, which are schema 1.  Unlike `Version`
+    /// (bumped by every `upgrade`), it only moves when `migrate` rewrites
+    /// storage.
+    SchemaVersion,
+    /// Persistent: the signer-set change awaiting approval
+    /// (`propose_multisig_config`).
+    PendingMultiSigConfig,
 }
 
 #[contracttype]
@@ -707,7 +751,6 @@ pub struct ExcessSweptEvent {
 /// count, auto-release window) is in `InitializedEvent`; consumers join on
 /// the contract ID instead of having it repeated here (#742).
 pub struct FundedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub total_amount: i128,
 }
@@ -718,7 +761,6 @@ pub struct FundedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneAddedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub freelancer: Address,
     /// Index of the newly appended milestone.
@@ -737,7 +779,6 @@ pub struct MilestoneAddedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneReducedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub freelancer: Address,
     pub milestone_index: u32,
@@ -753,7 +794,6 @@ pub struct MilestoneReducedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneFundedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub milestone_index: u32,
     pub amount: i128,
@@ -763,7 +803,6 @@ pub struct MilestoneFundedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionRequestedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub note_hash: BytesN<32>,
@@ -773,7 +812,6 @@ pub struct RevisionRequestedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveredEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub client: Address,
@@ -785,7 +823,6 @@ pub struct DeliveredEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeadlineExtendedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub extra_seconds: u32,
@@ -802,7 +839,6 @@ pub struct DeadlineExtendedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     /// Amount released to the freelancer by this approval.
     pub amount: i128,
@@ -853,7 +889,6 @@ pub struct DisputeEscalatedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeResolvedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub arbiter: Address,
     /// Amount owed on the milestone at the time of resolution (before
@@ -881,8 +916,6 @@ pub struct DisputeResolvedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArbitrationSplitAppliedEvent {
-    /// Address of this escrow contract.
-    pub contract_id: Address,
     /// Arbiter that authorised and applied the split (the acting address).
     pub arbiter: Address,
     /// Milestone the split was applied to.
@@ -912,7 +945,6 @@ pub struct ArbitrationSplitAppliedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxWithholdingDeductionsEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub gross_amount: i128,
     pub tax_amount: i128,
@@ -948,7 +980,6 @@ pub struct PlatformFeeDistribution {
 pub struct PlatformFeeAllocationOverrideEvent {
     /// Admin that authorised and applied the override (the acting address).
     pub admin: Address,
-    pub contract_id: Address,
     pub client_bps: u32,
     pub freelancer_bps: u32,
     pub treasury_bps: u32,
@@ -992,7 +1023,6 @@ pub struct PlatformFeeSplitCalculatedEvent {
 }
 
 pub struct AutoReleasedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub client: Address,
@@ -1047,7 +1077,6 @@ pub struct EscrowInterestYieldState {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     /// Address that triggered the release. Equal to `freelancer` for
     /// `claim_auto_release`; for `trigger_auto_release` it is the
@@ -1061,7 +1090,6 @@ pub struct ClaimedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawnEvent {
-    pub contract_id: Address,
     pub recipient: Address,
     pub token: Address,
     pub amount: i128,
@@ -1070,7 +1098,6 @@ pub struct WithdrawnEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobAcceptedEvent {
-    pub contract_id: Address,
     pub party: Address,
     pub acceptance_mask: u32,
 }
@@ -1079,7 +1106,6 @@ pub struct JobAcceptedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FreelancerRotatedEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub previous_freelancer: Address,
     pub new_freelancer: Address,
@@ -1088,7 +1114,6 @@ pub struct FreelancerRotatedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnacceptedWithdrawnEvent {
-    pub contract_id: Address,
     pub client: Address,
     pub token: Address,
     pub amount: i128,
@@ -1097,7 +1122,6 @@ pub struct UnacceptedWithdrawnEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelEscrowInitiatedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Whether the initiating caller is the client (`true`) or the freelancer
     /// (`false`).  Lets indexers attribute the cancellation without resolving
@@ -1141,7 +1165,6 @@ pub struct CancelApprovalRecord {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelApprovalRecordedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Current bitmask after recording this approval.
     /// bit 0 = client approved, bit 1 = freelancer approved.
@@ -1157,7 +1180,6 @@ pub struct CancelApprovalRecordedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelApprovalRevokedEvent {
-    pub contract_id: Address,
     pub caller: Address,
     /// Updated bitmask after removing this party's bit.
     pub approval_mask: u32,
@@ -1169,7 +1191,6 @@ pub struct CancelApprovalRevokedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminCancelOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub freelancer: Address,
     pub token: Address,
     pub total_released: i128,
@@ -1181,7 +1202,6 @@ pub struct AdminCancelOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminCancelOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub client: Address,
     pub token: Address,
     pub total_refunded: i128,
@@ -1193,7 +1213,6 @@ pub struct AdminCancelOverrideRefundEvent {
 pub struct EmergencyPausedEvent {
     pub client: Address,
     pub freelancer: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `emergency_unpause` when the admin unpauses the escrow.
@@ -1201,7 +1220,6 @@ pub struct EmergencyPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmergencyUnpausedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 #[contracttype]
@@ -1209,7 +1227,6 @@ pub struct EmergencyUnpausedEvent {
 pub struct EmergencyPartyUnpausedEvent {
     pub client: Address,
     pub freelancer: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `emergency_pause_claim_refund` on its success path only.
@@ -1242,7 +1259,6 @@ pub struct EmergencyPauseClaimRefundEvent {
 pub struct EmergencyPauseAdminOverrideEvent {
     /// Admin that authorised and applied the override (the acting address).
     pub admin: Address,
-    pub contract_id: Address,
     /// Pause flag persisted by this call (`DataKey::Ep`).
     pub paused: bool,
     /// Pause flag that was in effect immediately before this call.
@@ -1268,7 +1284,6 @@ pub struct TaxWithholdingRecord {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxWithholdingAppliedEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub gross_amount: i128,
     pub tax_amount: i128,
@@ -1299,7 +1314,6 @@ pub struct TaxWithholdingSplitRefundEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1313,7 +1327,6 @@ pub struct AdminOverrideTaxReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -1329,7 +1342,6 @@ pub struct AdminOverrideTaxRefundEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideTaxSplitRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1360,7 +1372,6 @@ pub struct TaxRecipientSetEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxPaidEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub recipient: Address,
     pub token: Address,
@@ -1409,7 +1420,6 @@ pub struct YieldAccruedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1422,7 +1432,6 @@ pub struct AdminOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -1503,7 +1512,6 @@ pub struct EscrowInterestYieldLockedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminOverrideStreamingReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1560,6 +1568,47 @@ pub struct MultiSigApprovedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingAdminTransfer {
     pub new_admin: Address,
+    pub proposal_id: u32,
+}
+
+/// A signer-set change awaiting approval by the current signers, recorded by
+/// `propose_multisig_config` and applied by `execute_multisig_config`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingMultiSigConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+    pub proposal_id: u32,
+}
+
+/// Emitted (`msigcfgp`) by `propose_multisig_config`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigProposedEvent {
+    pub admin: Address,
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+    pub proposal_id: u32,
+}
+
+/// Emitted (`msigcfg`) by `execute_multisig_config` when the signer set and
+/// threshold were replaced.  Approvals collected under the old set for a
+/// pending admin transfer are cleared.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigChangedEvent {
+    pub old_signers: Vec<Address>,
+    pub old_threshold: u32,
+    pub new_signers: Vec<Address>,
+    pub new_threshold: u32,
+    pub proposal_id: u32,
+}
+
+/// Emitted (`msigcfgx`) by `cancel_multisig_config_proposal`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfigCancelledEvent {
+    pub admin: Address,
     pub proposal_id: u32,
 }
 
@@ -1629,7 +1678,6 @@ pub struct AdminTransferProposal {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowPausedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 /// Emitted by `admin_resume_escrow` when the admin lifts the pause and
@@ -1638,7 +1686,6 @@ pub struct EscrowPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowResumedEvent {
     pub admin: Address,
-    pub contract_id: Address,
 }
 
 // ── NEW EVENTS ─────────────────────────────────────────────
@@ -1692,7 +1739,6 @@ pub struct PaymentStreamingEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaymentStreamingConsentEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1710,7 +1756,6 @@ pub struct PaymentStreamingConsentEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeExtConsentEvent {
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
@@ -1765,7 +1810,6 @@ pub struct MultisigApprovalInitEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultisigAdminOverrideReleaseEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub freelancer: Address,
     pub token: Address,
@@ -1778,7 +1822,6 @@ pub struct MultisigAdminOverrideReleaseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultisigAdminOverrideRefundEvent {
     pub admin: Address,
-    pub contract_id: Address,
     pub milestone_index: u32,
     pub client: Address,
     pub token: Address,
@@ -1849,6 +1892,16 @@ pub struct ContractUpgradedEvent {
 }
 
 pub type UpgradeEvent = ContractUpgradedEvent;
+
+/// Emitted by `migrate` when stored entries were rewritten from
+/// `from_version` to `to_version` (`SCHEMA_VERSION`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigratedEvent {
+    pub admin: Address,
+    pub from_version: u32,
+    pub to_version: u32,
+}
 
 #[contract]
 pub struct MilestoneEscrow;
@@ -2711,7 +2764,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (topic,),
             JobAcceptedEvent {
-                contract_id: env.current_contract_address(),
                 party,
                 acceptance_mask: new_mask,
             },
@@ -3462,6 +3514,9 @@ impl MilestoneEscrow {
         }
 
         env.storage().instance().set(&DataKey::Version, &1u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &SCHEMA_VERSION);
 
         let meta = JobMeta {
             client,
@@ -3635,6 +3690,7 @@ impl MilestoneEscrow {
         current_admin: Address,
         new_admin: Address,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         current_admin.require_auth();
@@ -3751,6 +3807,7 @@ impl MilestoneEscrow {
     ///   capacity cap. This guards against unbounded `Vec` growth and `u32`
     ///   length-counter overflow.
     pub fn add_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let zero_account = Address::from_str(
@@ -3823,6 +3880,7 @@ impl MilestoneEscrow {
     /// * `TokenNotWhitelisted` - The whitelist is empty, or the provided `token` is not present in the whitelist.
     /// * `WhitelistMinimum`    - Removing the token would leave the whitelist empty (the contract requires at least one token to remain).
     pub fn remove_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
@@ -3931,6 +3989,7 @@ impl MilestoneEscrow {
     /// * `InvalidAmount`    – The total milestone amount is invalid (e.g.
     ///                        overflow or non-positive).
     pub fn fund(env: Env, client: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -3972,7 +4031,6 @@ impl MilestoneEscrow {
                 meta.arbiter.clone(),
             ),
             FundedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 total_amount,
             },
@@ -3983,6 +4041,7 @@ impl MilestoneEscrow {
 
     /// Fund a single milestone when the escrow uses `FundingMode::PerMilestone`.
     pub fn fund_milestone(env: Env, client: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4045,7 +4104,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("msfund"),),
             MilestoneFundedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 milestone_index,
                 amount: milestone.amount,
@@ -4152,7 +4210,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("ms_add"),),
             MilestoneAddedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 freelancer,
                 milestone_index: new_index,
@@ -4249,7 +4306,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("ms_reduce"),),
             MilestoneReducedEvent {
-                contract_id: env.current_contract_address(),
                 client,
                 freelancer,
                 milestone_index,
@@ -4275,6 +4331,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `freelancer` does not match the job's freelancer.
     /// * `InvalidStatus`  – The freelancer has already accepted.
     pub fn accept_job(env: Env, freelancer: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         freelancer.require_auth();
         let meta = Self::load_job_meta(&env)?;
         if meta.freelancer != freelancer {
@@ -4293,6 +4350,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `arbiter` does not match the job's arbiter.
     /// * `InvalidStatus`  – The arbiter has already accepted.
     pub fn accept_arbiter(env: Env, arbiter: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         arbiter.require_auth();
         let meta = Self::load_job_meta(&env)?;
         if meta.arbiter != arbiter {
@@ -4337,7 +4395,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("freerot"), new_freelancer.clone()),
             FreelancerRotatedEvent {
-                contract_id: env.current_contract_address(),
                 client: meta.client,
                 previous_freelancer,
                 new_freelancer,
@@ -4364,6 +4421,7 @@ impl MilestoneEscrow {
     /// * `DeadlineNotPassed`       – The acceptance window is still open.
     /// * `InvalidAmount`           – Nothing remains to refund.
     pub fn withdraw_unaccepted(env: Env, client: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         client.require_auth();
         let meta = Self::load_job_meta(&env)?;
@@ -4422,7 +4480,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("unaccref"),),
             UnacceptedWithdrawnEvent {
-                contract_id: env.current_contract_address(),
                 client: meta.client,
                 token: meta.token,
                 amount: total_refunded,
@@ -4460,6 +4517,7 @@ impl MilestoneEscrow {
         freelancer: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4514,7 +4572,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("deliver"), meta.freelancer.clone()),
             DeliveredEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 client: meta.client,
@@ -4538,6 +4595,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         note_hash: BytesN<32>,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4588,7 +4646,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("msrev"),),
             RevisionRequestedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client,
                 note_hash,
@@ -4617,6 +4674,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         extra_seconds: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::assert_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4662,7 +4720,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("extend"),),
             DeadlineExtendedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client,
                 extra_seconds,
@@ -4699,6 +4756,7 @@ impl MilestoneEscrow {
         freelancer: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -4837,7 +4895,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("claim"), meta.freelancer.clone()),
             ClaimedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 caller,
                 freelancer: meta.freelancer.clone(),
@@ -4930,6 +4987,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         amount: i128,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5009,7 +5067,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("approve"), meta.client.clone()),
             ApprovedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 amount,
                 released_amount: updated_milestone.released_amount,
@@ -5043,6 +5100,7 @@ impl MilestoneEscrow {
     /// * `InvalidAmount`    – The milestone's remaining balance is not
     ///                        positive.
     pub fn approve_milestone(env: Env, client: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5113,7 +5171,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("approve"), meta.client.clone()),
             ApprovedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 amount: remaining,
                 released_amount: milestone.released_amount,
@@ -5139,6 +5196,7 @@ impl MilestoneEscrow {
     /// * `NotInitialized` – Contract has not been initialized.
     /// * `InvalidAmount`  – Nothing is owed to `caller`.
     pub fn withdraw(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         caller.require_auth();
         let meta = Self::load_job_meta(&env)?;
 
@@ -5163,7 +5221,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("withdraw"),),
             WithdrawnEvent {
-                contract_id: env.current_contract_address(),
                 recipient: caller,
                 token: meta.token,
                 amount,
@@ -5295,7 +5352,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("approve"), meta.client.clone()),
                 ApprovedEvent {
-                    contract_id: env.current_contract_address(),
                     milestone_index,
                     amount,
                     released_amount: milestone.amount,
@@ -5348,6 +5404,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         reason_hash: BytesN<32>,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5602,6 +5659,7 @@ impl MilestoneEscrow {
     ///   dispute metadata is missing.
     /// * [`Error::DisputeTimeoutNotReached`] – The timeout has not elapsed.
     pub fn escalate_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5711,6 +5769,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         release_to_freelancer: bool,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
@@ -5813,7 +5872,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("resolve"),),
             DisputeResolvedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
                 // `amount` is what was owed before capping to the available
@@ -5952,6 +6010,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         client_refund_bps: u32,
     ) -> Result<RefundAllocation, Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         let zero_account = Address::from_str(
             &env,
@@ -6060,7 +6119,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("resolve"),),
             DisputeResolvedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 arbiter: meta.arbiter.clone(),
                 amount: remaining,
@@ -6077,7 +6135,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("arbsplit"),),
             ArbitrationSplitAppliedEvent {
-                contract_id: env.current_contract_address(),
                 arbiter: meta.arbiter.clone(),
                 milestone_index,
                 client: meta.client.clone(),
@@ -6130,6 +6187,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`  – `caller` has already recorded an unexpired approval
     ///                      in this round (duplicate single-party call).
     pub fn cancel_escrow(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let zero_account = Address::from_str(
             &env,
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -6205,7 +6263,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("cancel"),),
                 CancelEscrowInitiatedEvent {
-                    contract_id: env.current_contract_address(),
                     caller_is_client: caller == meta.client,
                     client: meta.client.clone(),
                     freelancer: meta.freelancer.clone(),
@@ -6230,7 +6287,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("cxlappr"),),
             CancelApprovalRecordedEvent {
-                contract_id: env.current_contract_address(),
                 caller,
                 approval_mask: new_mask,
                 approved_at: now,
@@ -6267,6 +6323,7 @@ impl MilestoneEscrow {
     /// * `EscrowLocked`   – Both parties already approved; lock is active.
     /// * `InvalidStatus`  – `caller` has no recorded approval to revoke.
     pub fn revoke_cancel_approval(env: Env, caller: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let zero_account = Address::from_str(
             &env,
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -6326,7 +6383,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("cancelrev"),),
             CancelApprovalRevokedEvent {
-                contract_id: env.current_contract_address(),
                 caller,
                 approval_mask: new_mask,
             },
@@ -6365,13 +6421,13 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to pay out).
     pub fn admin_override_cancel_release(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let (meta, total_released) = Self::settle_all_remaining(&env, &admin, true)?;
 
         env.events().publish(
             (symbol_short!("adcovls"),),
             AdminCancelOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 freelancer: meta.freelancer,
                 token: meta.token,
                 total_released,
@@ -6410,13 +6466,13 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`   – the compact `C` lock is not active.
     /// * `InvalidAmount`   – Total remaining balance is zero (nothing to refund).
     pub fn admin_override_cancel_refund(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         let (meta, total_refunded) = Self::settle_all_remaining(&env, &admin, false)?;
 
         env.events().publish(
             (symbol_short!("adcovrf"),),
             AdminCancelOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 client: meta.client,
                 token: meta.token,
                 total_refunded,
@@ -6579,20 +6635,106 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `admin` is not the stored admin.
     pub fn migrate_cold_config(env: Env, admin: Address) -> Result<u32, Error> {
         Self::require_admin(&env, &admin)?;
+        Ok(Self::move_cold_config(&env))
+    }
 
+    /// Bring storage written by an older version of this contract up to
+    /// `SCHEMA_VERSION`.
+    ///
+    /// # Upgrade procedure
+    /// 1. `upgrade(admin, new_wasm_hash)` installs the new code.  If the new
+    ///    code's `SCHEMA_VERSION` is higher than the stored
+    ///    `schema_version()`, every state-changing endpoint now returns
+    ///    `MigrationRequired`, so nothing can write entries in the old shape
+    ///    or misread them.  Read-only getters and `upgrade` itself still work.
+    /// 2. `migrate(admin)` rewrites the stored entries one schema step at a
+    ///    time and records `SCHEMA_VERSION`.  Normal operation resumes.
+    ///
+    /// Steps:
+    /// * `1 → 2`: every `Milestone` stored without `spec_hash` gains a zero
+    ///   `spec_hash` (#767), and the whitelist, multisig, yield and fee
+    ///   configuration moves to persistent storage (#772, as
+    ///   `migrate_cold_config`).  Milestones that already carry a `spec_hash`
+    ///   (deployments created after #767 but before the schema marker) are
+    ///   left as they are.
+    ///
+    /// Returns the new schema version and emits `("migrate",)` with a
+    /// `MigratedEvent`.
+    ///
+    /// # Errors
+    /// * `NotInitialized`  – Admin key has never been stored.
+    /// * `Unauthorized`    – `admin` is not the stored admin.
+    /// * `AlreadyMigrated` – Storage is already at `SCHEMA_VERSION`.
+    pub fn migrate(env: Env, admin: Address) -> Result<u32, Error> {
+        Self::require_admin(&env, &admin)?;
+        let from_version = Self::read_schema_version(&env);
+        if from_version >= SCHEMA_VERSION {
+            return Err(Error::AlreadyMigrated);
+        }
+
+        if from_version < 2 {
+            Self::migrate_milestones_to_v2(&env)?;
+            Self::move_cold_config(&env);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &SCHEMA_VERSION);
+        env.events().publish(
+            (symbol_short!("migrate"),),
+            MigratedEvent {
+                admin,
+                from_version,
+                to_version: SCHEMA_VERSION,
+            },
+        );
+        Ok(SCHEMA_VERSION)
+    }
+
+    /// Schema 1 → 2 for milestones: add a zero `spec_hash` to every entry
+    /// stored without one.
+    fn migrate_milestones_to_v2(env: &Env) -> Result<(), Error> {
+        let meta = Self::load_job_meta(env)?;
+        let persistent = env.storage().persistent();
+        let spec_hash_field = Symbol::new(env, "spec_hash");
+        for index in 0..meta.milestone_count {
+            let key = DataKey::Milestone(index);
+            // Decode the field map first: an entry that already has
+            // `spec_hash` would not decode as `MilestoneV1`.
+            let fields: Map<Symbol, Val> = persistent.get(&key).ok_or(Error::InvalidMilestone)?;
+            if fields.contains_key(spec_hash_field.clone()) {
+                continue;
+            }
+            let old: MilestoneV1 = persistent.get(&key).ok_or(Error::InvalidMilestone)?;
+            persistent.set(
+                &key,
+                &Milestone {
+                    amount: old.amount,
+                    released_amount: old.released_amount,
+                    status: old.status,
+                    delivered_at: old.delivered_at,
+                    funded: old.funded,
+                    spec_hash: BytesN::from_array(env, &[0u8; 32]),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Body of `migrate_cold_config`, shared with `migrate`.  Returns the
+    /// number of instance entries that were moved or folded.
+    fn move_cold_config(env: &Env) -> u32 {
         let mut moved = 0u32;
-        if Self::migrate_cold_entry::<Vec<Address>>(&env, &DataKey::WhitelistedTokens) {
+        if Self::migrate_cold_entry::<Vec<Address>>(env, &DataKey::WhitelistedTokens) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<MultiSigConfig>(&env, &DataKey::MultiSigConfig) {
+        if Self::migrate_cold_entry::<MultiSigConfig>(env, &DataKey::MultiSigConfig) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<EscrowInterestYieldState>(&env, &DataKey::InterestYieldState)
-        {
+        if Self::migrate_cold_entry::<EscrowInterestYieldState>(env, &DataKey::InterestYieldState) {
             moved += 1;
         }
-        if Self::migrate_cold_entry::<PlatformFeeAllocation>(&env, &DataKey::PlatformFeeAllocation)
-        {
+        if Self::migrate_cold_entry::<PlatformFeeAllocation>(env, &DataKey::PlatformFeeAllocation) {
             moved += 1;
         }
 
@@ -6612,7 +6754,7 @@ impl MilestoneEscrow {
             moved += 1;
         }
 
-        Ok(moved)
+        moved
     }
 
     /// Freeze the escrow: set `DataKey::Ep`, blocking every
@@ -6667,11 +6809,7 @@ impl MilestoneEscrow {
 
         env.events().publish(
             (symbol_short!("empause"),),
-            EmergencyPausedEvent {
-                client,
-                freelancer,
-                contract_id: env.current_contract_address(),
-            },
+            EmergencyPausedEvent { client, freelancer },
         );
 
         Ok(())
@@ -6721,7 +6859,6 @@ impl MilestoneEscrow {
             (symbol_short!("emunpause"),),
             EmergencyUnpausedEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
             },
         );
 
@@ -6760,11 +6897,7 @@ impl MilestoneEscrow {
 
         env.events().publish(
             (symbol_short!("emunpause"),),
-            EmergencyPartyUnpausedEvent {
-                client,
-                freelancer,
-                contract_id: env.current_contract_address(),
-            },
+            EmergencyPartyUnpausedEvent { client, freelancer },
         );
         Ok(())
     }
@@ -6804,7 +6937,6 @@ impl MilestoneEscrow {
             (symbol_short!("emoverrid"),),
             EmergencyPauseAdminOverrideEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
                 paused: true,
                 previous: current,
             },
@@ -6924,6 +7056,7 @@ impl MilestoneEscrow {
         freelancer_bps: u32,
         treasury_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Both the Admin read and all subsequent instance reads/writes touch
         // instance storage only, so the whole function uses a single ledger entry.
         Self::require_admin_from_instance(&env, &admin)?;
@@ -7005,6 +7138,7 @@ impl MilestoneEscrow {
     /// * `Error::NotInitialized` – no platform-fee allocation exists (inside the
     ///   execution lock guard).
     pub fn lock_platform_fee_allocation(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Perform all authorization and precondition checks before any ledger writes
         // so unauthorized callers and illegal source states are rejected without
         // mutating any storage entry.
@@ -7069,6 +7203,7 @@ impl MilestoneEscrow {
         freelancer_bps: u32,
         treasury_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let current: PlatformFeeAllocation = Self::load_platform_fee_allocation(&env)?;
@@ -7097,7 +7232,6 @@ impl MilestoneEscrow {
             (symbol_short!("pf_ovr"),),
             PlatformFeeAllocationOverrideEvent {
                 admin: admin.clone(),
-                contract_id: env.current_contract_address(),
                 client_bps,
                 freelancer_bps,
                 treasury_bps,
@@ -7273,6 +7407,7 @@ impl MilestoneEscrow {
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: the caller must have signed this transaction. The
         // SDK aborts the call before any ledger access if the signature is
         // missing, so an unsigned attempt is rejected outright.
@@ -7361,6 +7496,7 @@ impl MilestoneEscrow {
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Reject illegal source state before any further ledger access.
         Self::assert_payment_streaming_not_locked(&env)?;
         Self::assert_not_paused(&env)?;
@@ -7428,7 +7564,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("p_strcns"),),
                 PaymentStreamingConsentEvent {
-                    contract_id: contract_addr,
                     milestone_index,
                     client: meta.client.clone(),
                     freelancer: meta.freelancer.clone(),
@@ -7497,6 +7632,7 @@ impl MilestoneEscrow {
         elapsed_seconds: i128,
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: the caller must have signed this transaction. The
         // SDK aborts the call before any ledger access if the signature is
         // missing, so an unsigned attempt is rejected outright.
@@ -7586,6 +7722,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         extra_seconds: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Reject illegal source state before collecting signatures so a
         // mistaken call never mutates storage.
         Self::assert_not_paused(&env)?;
@@ -7630,7 +7767,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("m_extcns"),),
             TimeExtConsentEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -7841,6 +7977,7 @@ impl MilestoneEscrow {
         signers: Vec<Address>,
         threshold: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin_from_instance(&env, &admin)?;
 
         // Either layout means the regime already exists: a contract upgraded
@@ -7949,6 +8086,7 @@ impl MilestoneEscrow {
         signer: Address,
         proposal_id: u32,
     ) -> Result<MultiSigApprovalState, Error> {
+        Self::ensure_migrated(&env)?;
         signer.require_auth();
 
         // Consolidated multisig config read (issue #456): the signer set and
@@ -8142,6 +8280,7 @@ impl MilestoneEscrow {
         admin: Address,
         new_admin: Address,
     ) -> Result<u32, Error> {
+        Self::ensure_migrated(&env)?;
         // Storage-footprint note: `DataKey::Version` (instance) and
         // `DataKey::Admin` (persistent) are only ever written together, in a
         // single atomic `initialize` call — a failed `initialize` reverts the
@@ -8174,28 +8313,7 @@ impl MilestoneEscrow {
         // release profile's overflow checks, and the counter write lands in
         // the same invocation as the two record writes below, so the assigned
         // ID can never be handed out twice.
-        let proposal_id: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::AdminProposalCounter)
-            .unwrap_or(0u32)
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow)?;
-        let created_at = env.ledger().timestamp();
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::AdminProposalCounter, &proposal_id);
-        env.storage().persistent().set(
-            &DataKey::AdminProposal(proposal_id),
-            &AdminTransferProposal {
-                proposal_id,
-                new_admin: new_admin.clone(),
-                created_at,
-                status: AdminProposalStatus::Pending,
-                approvals_bitmap: 0,
-            },
-        );
+        let proposal_id = Self::open_proposal_record(&env, &new_admin)?;
         env.storage().persistent().set(
             &DataKey::PendingAdminTransfer,
             &PendingAdminTransfer {
@@ -8213,6 +8331,33 @@ impl MilestoneEscrow {
             },
         );
 
+        Ok(proposal_id)
+    }
+
+    /// Assign the next proposal ID and open its `Pending` record with an
+    /// empty approval bitmap (issue #785).  `checked_add` reports an exhausted
+    /// counter as `ArithmeticOverflow`, and the counter and record are written
+    /// in the same invocation, so an ID is never handed out twice.  `subject`
+    /// is stored as the record's `new_admin`: the incoming admin for a
+    /// transfer, the proposing admin for a signer-set change.
+    fn open_proposal_record(env: &Env, subject: &Address) -> Result<u32, Error> {
+        let persistent = env.storage().persistent();
+        let proposal_id: u32 = persistent
+            .get(&DataKey::AdminProposalCounter)
+            .unwrap_or(0u32)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        persistent.set(&DataKey::AdminProposalCounter, &proposal_id);
+        persistent.set(
+            &DataKey::AdminProposal(proposal_id),
+            &AdminTransferProposal {
+                proposal_id,
+                new_admin: subject.clone(),
+                created_at: env.ledger().timestamp(),
+                status: AdminProposalStatus::Pending,
+                approvals_bitmap: 0,
+            },
+        );
         Ok(proposal_id)
     }
 
@@ -8235,6 +8380,7 @@ impl MilestoneEscrow {
     /// * `MultiSigThresholdNotMet` – Approvals collected so far are below the
     ///   required threshold.
     pub fn execute_admin_transfer(env: Env) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Precondition guard: reject an uninitialised contract (no admin ever
         // stored, so nothing can be transferred) with `NotInitialized` before
         // any pending-transfer or approval storage is read or written.
@@ -8321,6 +8467,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`           – Caller is not the stored admin.
     /// * `NoPendingAdminTransfer` – Nothing is currently pending.
     pub fn cancel_admin_transfer_proposal(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let pending: PendingAdminTransfer = env
@@ -8357,6 +8504,190 @@ impl MilestoneEscrow {
         );
 
         Ok(())
+    }
+
+    // ── multisig signer-set rotation ───────────────────────────────────────
+    //
+    // `multisig_approval_init` can only run once, so rotating signers (a
+    // lost key, a departing operator) or changing the threshold goes through
+    // the same proposal/approval flow as an admin transfer: the admin
+    // proposes, the contract assigns the proposal ID and opens its record
+    // (#785), the *current* signers approve it up to the current threshold,
+    // and anyone executes.
+    //
+    // Approval bitmaps index the signer vec, so bit `i` names a different
+    // address after a rotation.  Executing a rotation therefore clears the
+    // approvals of a pending admin-transfer proposal; the new signers have to
+    // approve it again.
+
+    /// Propose replacing the multisig signer set and threshold.
+    ///
+    /// The new configuration is validated like `multisig_approval_init`'s and
+    /// recorded as pending under a contract-assigned proposal ID, which is
+    /// returned.  It takes effect through `execute_multisig_config` once the
+    /// current signers have approved that ID up to the current threshold.
+    /// Emits `msigcfgp`.
+    ///
+    /// # Errors
+    /// * `NotInitialized`           – Contract not initialised, or no multisig
+    ///   regime exists yet (use `multisig_approval_init`).
+    /// * `Unauthorized`             – `admin` is not the stored admin.
+    /// * `MultiSigNoSigners` / `MultiSigTooManySigners` /
+    ///   `MultiSigInvalidThreshold` / `MultiSigDuplicateSigner` – the new
+    ///   configuration is invalid (`validate_multisig_setup`).
+    /// * `MultiSigConfigPending`    – Another change is already pending.
+    /// * `ArithmeticOverflow`       – The proposal counter is exhausted.
+    pub fn propose_multisig_config(
+        env: Env,
+        admin: Address,
+        new_signers: Vec<Address>,
+        new_threshold: u32,
+    ) -> Result<u32, Error> {
+        Self::ensure_migrated(&env)?;
+        Self::require_admin(&env, &admin)?;
+        Self::load_multisig_config(&env).ok_or(Error::NotInitialized)?;
+        Self::validate_multisig_setup(&new_signers, new_threshold)?;
+
+        let persistent = env.storage().persistent();
+        if persistent.has(&DataKey::PendingMultiSigConfig) {
+            return Err(Error::MultiSigConfigPending);
+        }
+
+        let proposal_id = Self::open_proposal_record(&env, &admin)?;
+        persistent.set(
+            &DataKey::PendingMultiSigConfig,
+            &PendingMultiSigConfig {
+                signers: new_signers.clone(),
+                threshold: new_threshold,
+                proposal_id,
+            },
+        );
+
+        env.events().publish(
+            (symbol_short!("msigcfgp"),),
+            MultiSigConfigProposedEvent {
+                admin,
+                signers: new_signers,
+                threshold: new_threshold,
+                proposal_id,
+            },
+        );
+
+        Ok(proposal_id)
+    }
+
+    /// Apply the pending signer-set change once its proposal has reached the
+    /// current threshold.  Anyone may call it.  The proposal is consumed, and
+    /// a pending admin transfer's approvals are cleared because they index the
+    /// old signer vec.  Emits `msigcfg`.
+    ///
+    /// # Errors
+    /// * `NoPendingMultiSigConfig` – Nothing is pending.
+    /// * `NotInitialized`          – No multisig regime exists.
+    /// * `InvalidStatus`           – The proposal record is missing or no
+    ///   longer `Pending`.
+    /// * `MultiSigThresholdNotMet` – Not enough current signers approved.
+    pub fn execute_multisig_config(env: Env) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        let persistent = env.storage().persistent();
+        let pending: PendingMultiSigConfig = persistent
+            .get(&DataKey::PendingMultiSigConfig)
+            .ok_or(Error::NoPendingMultiSigConfig)?;
+        let MultiSigConfig(old_signers, old_threshold) =
+            Self::load_multisig_config(&env).ok_or(Error::NotInitialized)?;
+
+        let mut record: AdminTransferProposal = persistent
+            .get(&DataKey::AdminProposal(pending.proposal_id))
+            .ok_or(Error::InvalidStatus)?;
+        if record.status != AdminProposalStatus::Pending {
+            return Err(Error::InvalidStatus);
+        }
+        if !Self::read_multisig_approval(&env, pending.proposal_id)?.approved {
+            return Err(Error::MultiSigThresholdNotMet);
+        }
+
+        persistent.set(
+            &DataKey::MultiSigConfig,
+            &MultiSigConfig(pending.signers.clone(), pending.threshold),
+        );
+        // Drop any pre-#772 / pre-#456 instance copies so no read path can
+        // fall back to the old set.
+        let instance = env.storage().instance();
+        instance.remove(&DataKey::MultiSigConfig);
+        instance.remove(&DataKey::MultiSigSigners);
+        instance.remove(&DataKey::MultiSigThreshold);
+        persistent.remove(&DataKey::PendingMultiSigConfig);
+
+        record.status = AdminProposalStatus::Executed;
+        record.approvals_bitmap = 0;
+        persistent.set(&DataKey::AdminProposal(pending.proposal_id), &record);
+
+        // Approvals for a pending admin transfer were given by the old signer
+        // set; their bits would name different addresses now.
+        if let Some(transfer) =
+            persistent.get::<_, PendingAdminTransfer>(&DataKey::PendingAdminTransfer)
+        {
+            let key = DataKey::AdminProposal(transfer.proposal_id);
+            if let Some(mut transfer_record) = persistent.get::<_, AdminTransferProposal>(&key) {
+                if transfer_record.approvals_bitmap != 0 {
+                    transfer_record.approvals_bitmap = 0;
+                    persistent.set(&key, &transfer_record);
+                }
+            }
+        }
+
+        env.events().publish(
+            (symbol_short!("msigcfg"),),
+            MultiSigConfigChangedEvent {
+                old_signers,
+                old_threshold,
+                new_signers: pending.signers,
+                new_threshold: pending.threshold,
+                proposal_id: pending.proposal_id,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Withdraw the pending signer-set change.  Its proposal is consumed.
+    /// Emits `msigcfgx`.
+    ///
+    /// # Errors
+    /// * `Unauthorized`            – `admin` is not the stored admin.
+    /// * `NoPendingMultiSigConfig` – Nothing is pending.
+    pub fn cancel_multisig_config_proposal(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        Self::require_admin(&env, &admin)?;
+        let persistent = env.storage().persistent();
+        let pending: PendingMultiSigConfig = persistent
+            .get(&DataKey::PendingMultiSigConfig)
+            .ok_or(Error::NoPendingMultiSigConfig)?;
+        persistent.remove(&DataKey::PendingMultiSigConfig);
+
+        let key = DataKey::AdminProposal(pending.proposal_id);
+        if let Some(mut record) = persistent.get::<_, AdminTransferProposal>(&key) {
+            record.status = AdminProposalStatus::Cancelled;
+            record.approvals_bitmap = 0;
+            persistent.set(&key, &record);
+        }
+
+        env.events().publish(
+            (symbol_short!("msigcfgx"),),
+            MultiSigConfigCancelledEvent {
+                admin,
+                proposal_id: pending.proposal_id,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// The pending signer-set change, if any.
+    pub fn get_pending_multisig_config(env: Env) -> Option<PendingMultiSigConfig> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingMultiSigConfig)
     }
 
     /// Return the currently pending admin-transfer proposal, if any.
@@ -8450,6 +8781,36 @@ impl MilestoneEscrow {
     /// **This function must contain only read operations.**
     fn read_version(env: &Env) -> u32 {
         env.storage().instance().get(&DataKey::Version).unwrap_or(1)
+    }
+
+    /// Return the storage layout version (see `SCHEMA_VERSION`).
+    ///
+    /// Lower than `SCHEMA_VERSION` after an `upgrade` until the admin calls
+    /// `migrate`; state-changing endpoints return `MigrationRequired` until
+    /// then.  Read-only; `1` on deployments that predate the marker.
+    pub fn schema_version(env: Env) -> u32 {
+        Self::read_schema_version(&env)
+    }
+
+    fn read_schema_version(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SchemaVersion)
+            .unwrap_or(1)
+    }
+
+    /// Reject state-changing calls until `migrate` has brought storage up to
+    /// `SCHEMA_VERSION`.  An uninitialized contract passes, so its endpoints
+    /// keep reporting `NotInitialized`.
+    fn ensure_migrated(env: &Env) -> Result<(), Error> {
+        let instance = env.storage().instance();
+        match instance.get::<_, u32>(&DataKey::SchemaVersion) {
+            Some(version) if version >= SCHEMA_VERSION => Ok(()),
+            Some(_) => Err(Error::MigrationRequired),
+            // `DataKey::Version` is the initialisation marker.
+            None if instance.has(&DataKey::Version) => Err(Error::MigrationRequired),
+            None => Ok(()),
+        }
     }
 
     /// Return a full snapshot of the current job, including every
@@ -8572,6 +8933,7 @@ impl MilestoneEscrow {
     /// balance is returned to the client. Non-escrow tokens are returned in
     /// full to the client after confirming they are not the settlement token.
     pub fn sweep_excess(env: Env, caller: Address, token: Address) -> Result<i128, Error> {
+        Self::ensure_migrated(&env)?;
         Self::ensure_not_paused(&env)?;
         caller.require_auth();
         let meta = Self::load_job_meta(&env)?;
@@ -8799,6 +9161,7 @@ impl MilestoneEscrow {
         client_share_bps: u32,
         freelancer_share_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization: `admin.require_auth()` inside the helper makes the
         // host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
@@ -8872,6 +9235,7 @@ impl MilestoneEscrow {
         client_share_bps: u32,
         freelancer_share_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
         let meta = Self::load_job_meta(&env)?;
 
@@ -8969,6 +9333,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`    – `admin` does not match the stored admin.
     /// * `InvalidStatus`   – The interest/yield configuration is already locked.
     pub fn lock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Guard 1 — authorization. `admin.require_auth()` inside the helper makes
         // the host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
@@ -9014,6 +9379,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized` - Caller is not the stored admin.
     /// * `InvalidStatus` - Interest/yield lock is not active (already unlocked).
     pub fn unlock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
         Self::require_client_and_freelancer_consent(&env)?;
         let mut state = Self::load_interest_yield_state(&env)?;
@@ -9278,6 +9644,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`   – `admin` does not match the stored admin key.
     /// * `InvalidRatio`   – `rate_bps` exceeds 10 000.
     pub fn admin_set_yield_rate(env: Env, admin: Address, rate_bps: u32) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Precondition 1: contract must be fully initialised (job metadata
         // must exist).  This check runs before any auth or storage mutation so
         // that callers on an uninitialised contract receive `NotInitialized`
@@ -9374,6 +9741,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         accrued_amount: i128,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorize from instance storage so the admin read shares a ledger
         // entry with the `DataKey::Job` read below (see the rustdoc note).
         Self::require_admin_from_instance(&env, &admin)?;
@@ -9448,6 +9816,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
@@ -9507,7 +9876,6 @@ impl MilestoneEscrow {
             (symbol_short!("admovrls"),),
             AdminOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -9549,6 +9917,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
@@ -9610,7 +9979,6 @@ impl MilestoneEscrow {
             (symbol_short!("admovrf"),),
             AdminOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,
@@ -9655,6 +10023,7 @@ impl MilestoneEscrow {
         elapsed_seconds: i128,
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
@@ -9726,7 +10095,6 @@ impl MilestoneEscrow {
             (symbol_short!("admstrm"),),
             AdminOverrideStreamingReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -9789,13 +10157,8 @@ impl MilestoneEscrow {
 
         env.storage().instance().set(&DataKey::Paused, &true);
 
-        env.events().publish(
-            (symbol_short!("pause"),),
-            EscrowPausedEvent {
-                admin,
-                contract_id: env.current_contract_address(),
-            },
-        );
+        env.events()
+            .publish((symbol_short!("pause"),), EscrowPausedEvent { admin });
 
         Ok(())
     }
@@ -9855,7 +10218,6 @@ impl MilestoneEscrow {
                 (symbol_short!("resume"),),
                 EscrowResumedEvent {
                     admin: admin.clone(),
-                    contract_id: env.current_contract_address(),
                 },
             );
 
@@ -9956,7 +10318,6 @@ impl MilestoneEscrow {
             env.events().publish(
                 (symbol_short!("taxpaid"),),
                 TaxPaidEvent {
-                    contract_id: env.current_contract_address(),
                     milestone_index,
                     recipient: recipient.clone(),
                     token: token.clone(),
@@ -10068,6 +10429,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         tax_rate_bps: u32,
     ) -> Result<TaxWithholdingRecord, Error> {
+        Self::ensure_migrated(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
         let meta = Self::load_job_meta(&env)?;
 
@@ -10132,7 +10494,6 @@ impl MilestoneEscrow {
         env.events().publish(
             (symbol_short!("taxwith"),),
             TaxWithholdingAppliedEvent {
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 gross_amount,
                 tax_amount,
@@ -10344,6 +10705,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_initialized(&env)?;
 
         Self::require_admin(&env, &admin)?;
@@ -10400,7 +10762,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtxrls"),),
             AdminOverrideTaxReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -10439,6 +10800,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let record: TaxWithholdingRecord = env
@@ -10495,7 +10857,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtxrfd"),),
             AdminOverrideTaxRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,
@@ -10542,6 +10903,7 @@ impl MilestoneEscrow {
         client_refund_bps: u32,
         freelancer_payout_bps: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         let record: TaxWithholdingRecord = env
@@ -10594,7 +10956,6 @@ impl MilestoneEscrow {
             .persistent()
             .remove(&DataKey::TaxWithholdingLock(milestone_index));
 
-        let contract_addr = env.current_contract_address();
         let token_client = token::Client::new(&env, &meta.token);
         if allocation.client_refund > 0 {
             Self::pay_or_credit(&env, &token_client, &meta.client, &allocation.client_refund)?;
@@ -10623,7 +10984,6 @@ impl MilestoneEscrow {
             (symbol_short!("adtwsplt"),),
             AdminOverrideTaxSplitRefundEvent {
                 admin,
-                contract_id: contract_addr,
                 milestone_index,
                 client: meta.client,
                 freelancer: meta.freelancer,
@@ -10753,7 +11113,6 @@ impl MilestoneEscrow {
             (symbol_short!("taxwh"),),
             TaxWithholdingDeductionsEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 gross_amount,
                 tax_amount,
@@ -10827,6 +11186,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Auth + init guards first — a single require_auth so the host does not
         // abort on a duplicated auth requirement.
         admin.require_auth();
@@ -10907,7 +11267,6 @@ impl MilestoneEscrow {
             (symbol_short!("msadmrel"),),
             MultisigAdminOverrideReleaseEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 freelancer: meta.freelancer,
                 token: meta.token,
@@ -10960,6 +11319,7 @@ impl MilestoneEscrow {
         admin: Address,
         milestone_index: u32,
     ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         Self::require_admin(&env, &admin)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
@@ -11021,7 +11381,6 @@ impl MilestoneEscrow {
             (symbol_short!("msadmref"),),
             MultisigAdminOverrideRefundEvent {
                 admin,
-                contract_id: env.current_contract_address(),
                 milestone_index,
                 client: meta.client,
                 token: meta.token,
@@ -11809,6 +12168,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus`  – The multisig workflow is already locked.
     /// * `EmergencyPauseInProgress` – An emergency pause lock is currently active.
     pub fn multisig_lock(env: Env, admin: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
         // Authorization check at top - require auth and admin role first
         Self::require_admin_from_instance(&env, &admin)?;
         // Precondition guards before any ledger write: validate illegal source state
