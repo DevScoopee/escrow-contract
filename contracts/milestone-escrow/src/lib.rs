@@ -228,7 +228,7 @@ const MAX_CLIENT_FEE_BPS: u32 = 5000;
 
 /// Upper bound on the number of milestones a job may carry, including
 /// milestones appended after funding by `add_milestone` (issue #737).
-/// Keeps `get_job`, `checked_job_total` and every whole-set iteration bounded
+/// Keeps `get_job` and every whole-set iteration bounded
 /// so the ledger footprint of amendment endpoints stays predictable.
 const MAX_MILESTONES: u32 = 50;
 /// Seconds after funding during which the freelancer and arbiter may accept
@@ -2923,26 +2923,15 @@ impl MilestoneEscrow {
         Ok(total_amount)
     }
 
-    fn checked_job_total(env: &Env, meta: &JobMeta) -> Result<i128, Error> {
-        let mut total_amount: i128 = 0;
-
-        for index in 0..meta.milestone_count {
-            let milestone = Self::load_milestone(env, index)?;
-            total_amount = Self::checked_add_amount(total_amount, milestone.amount)?;
-        }
-
-        if total_amount != meta.total_amount {
-            return Err(Error::InvalidAmount);
-        }
-
-        Ok(total_amount)
-    }
-
-    fn validate_fund_amount(env: &Env, meta: &JobMeta) -> Result<i128, Error> {
-        let total_amount = Self::checked_job_total(env, meta)?;
+    fn validate_fund_amount(meta: &JobMeta) -> Result<i128, Error> {
+        let total_amount = meta.total_amount;
         if total_amount <= 0 {
             return Err(Error::InvalidAmount);
         }
+
+        // `total_amount` is kept in step with the milestones by initialize,
+        // add_milestone and reduce_milestone, so fund needs no milestone reads
+        // (#730).
 
         Ok(total_amount)
     }
@@ -3915,7 +3904,7 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
 
-        let total_amount = Self::validate_fund_amount(&env, &meta)?;
+        let total_amount = Self::validate_fund_amount(&meta)?;
 
         // Update status BEFORE token transfer to ensure state is persisted
         // and prevent double-funding via reentrancy
@@ -4652,7 +4641,7 @@ impl MilestoneEscrow {
     /// - 1× token transfer
     ///
     /// No loop over all milestones is performed here.  Functions that do loop
-    /// over all milestones (`checked_job_total`, `assemble_job`) are
+    /// over all milestones (`assemble_job`) are
     /// intentionally not called from this hot path.
     ///
     /// The payout always goes to the job's freelancer, so the signature only

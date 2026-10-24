@@ -46,6 +46,7 @@ mod event_docs_sync_tests;
 mod event_topic_tests;
 mod execute_admin_transfer_tests;
 mod freelancer_rotation_tests;
+mod fund_footprint_tests;
 mod funding_mode_tests;
 mod get_escrow_interest_yield_no_mutation_tests;
 mod get_job_no_mutation_tests;
@@ -1917,7 +1918,7 @@ fn test_fund_uses_cached_total_for_many_milestones() {
 }
 
 #[test]
-fn test_fund_rejects_missing_milestone_index() {
+fn test_fund_uses_the_stored_total_not_milestone_entries() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1954,14 +1955,15 @@ fn test_fund_rejects_missing_milestone_index() {
 
     client.accept_job(&freelancer_addr);
     client.accept_arbiter(&arbiter_addr);
-    let result = client.try_fund(&client_addr);
-    assert_eq!(result, Err(Ok(Error::InvalidMilestone)));
-    assert_eq!(token.balance(&client_addr), 3_000);
-    assert_eq!(token.balance(&contract_id), 0);
+    // fund deposits the stored total without reading milestone entries
+    // (#730), so a missing entry does not affect it.
+    client.fund(&client_addr);
+    assert_eq!(token.balance(&client_addr), 0);
+    assert_eq!(token.balance(&contract_id), 3_000);
 }
 
 #[test]
-fn test_fund_rejects_zero_milestone_amount() {
+fn test_fund_rejects_a_zero_stored_total() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1992,16 +1994,12 @@ fn test_fund_rejects_zero_milestone_amount() {
         &crate::test_spec_hashes(&env, &amounts),
     );
 
+    // fund relies on the stored total (#730), so corrupt that instead of a
+    // milestone entry.
     env.as_contract(&contract_id, || {
-        let mut milestone: Milestone = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Milestone(0u32))
-            .unwrap();
-        milestone.amount = 0;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestone(0u32), &milestone);
+        let mut meta = MilestoneEscrow::load_job_meta(&env).unwrap();
+        meta.total_amount = 0;
+        MilestoneEscrow::store_job_meta(&env, &meta);
     });
 
     client.accept_job(&freelancer_addr);
@@ -2013,7 +2011,7 @@ fn test_fund_rejects_zero_milestone_amount() {
 }
 
 #[test]
-fn test_fund_rejects_negative_milestone_amount() {
+fn test_fund_rejects_a_negative_stored_total() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -2044,16 +2042,12 @@ fn test_fund_rejects_negative_milestone_amount() {
         &crate::test_spec_hashes(&env, &amounts),
     );
 
+    // fund relies on the stored total (#730), so corrupt that instead of a
+    // milestone entry.
     env.as_contract(&contract_id, || {
-        let mut milestone: Milestone = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Milestone(0u32))
-            .unwrap();
-        milestone.amount = -1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestone(0u32), &milestone);
+        let mut meta = MilestoneEscrow::load_job_meta(&env).unwrap();
+        meta.total_amount = -1;
+        MilestoneEscrow::store_job_meta(&env, &meta);
     });
 
     client.accept_job(&freelancer_addr);
