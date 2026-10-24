@@ -538,7 +538,7 @@ fn test_time_extensions_consent_emits_event_with_extension_details() {
 // ── #581: checked arithmetic in time_until_auto_release ──────────────────────
 
 /// `delivered_at + auto_release_seconds` overflows u64: the first checked_add
-/// inside `time_until_auto_release` must return `InvalidAmount` rather than
+/// inside `time_until_auto_release` must return `ArithmeticOverflow` rather than
 /// wrapping or panicking.
 #[test]
 fn time_until_auto_release_deadline_overflow_returns_invalid_amount() {
@@ -557,12 +557,12 @@ fn time_until_auto_release_deadline_overflow_returns_invalid_amount() {
 
     assert_eq!(
         escrow.try_time_until_auto_release(&0),
-        Err(Ok(Error::InvalidAmount))
+        Err(Ok(Error::ArithmeticOverflow))
     );
 }
 
 /// `deadline - current` overflows i64: when `deadline as i64` wraps to
-/// `i64::MIN` the checked_sub must return `InvalidAmount` rather than wrapping.
+/// `i64::MIN` the checked_sub must return `ArithmeticOverflow` rather than wrapping.
 ///
 /// `deadline as i64 == i64::MIN` when `deadline == 2^63`.  We arrange that by
 /// setting `delivered_at = 2^63 - auto_release_seconds` so that
@@ -593,7 +593,7 @@ fn time_until_auto_release_subtraction_overflow_returns_invalid_amount() {
 
     assert_eq!(
         escrow.try_time_until_auto_release(&0),
-        Err(Ok(Error::InvalidAmount))
+        Err(Ok(Error::ArithmeticOverflow))
     );
 }
 

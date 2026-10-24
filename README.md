@@ -191,6 +191,61 @@ The contract exposes **94 public functions** grouped by category below.
 Events carry party addresses as extra topics for `getEvents` filtering; see
 [EVENTS.md](EVENTS.md#indexed-topics).
 
+## Contract Errors
+
+| Code | Error | Meaning |
+|---|---|---|
+| 1 | `AlreadyInitialized` | `initialize` was called more than once |
+| 2 | `NotInitialized` | A call required the contract to be initialized but it was not |
+| 3 | `AlreadyFunded` | `fund` was called after the escrow was already funded |
+| 4 | `NotFunded` | An operation that requires the escrow to be funded was attempted while it was not |
+| 5 | `Unauthorized` | Caller is not authorized to perform this action |
+| 6 | `InvalidMilestone` | Milestone index is out of bounds or refers to an invalid milestone |
+| 7 | `InvalidStatus` | Operation is not allowed for the current milestone status |
+| 8 | `TokenNotWhitelisted` | The provided token address is not whitelisted by the admin |
+| 9 | `TokenAlreadyWhitelisted` | Attempted to whitelist a token that is already whitelisted |
+| 10 | `InvalidAmount` | Amount is zero, negative, or otherwise invalid for this operation |
+| 11 | `DeadlineNotPassed` | Required deadline/timeout has not yet passed |
+| 12 | `InvalidAddress` | Provided address is invalid |
+| 13 | `Paused` | Contract is paused and this operation is not allowed while paused |
+| 14 | `InvalidRatio` | Ratio sum is incorrect (must sum to BPS_SCALE) or values are out of range |
+| 15 | `InvalidExtension` | Milestone time extension is invalid (e.g |
+| 16 | `EscrowLocked` | Escrow is locked (e.g |
+| 17 | `MultiSigNoSigners` | Multisig setup requires at least one signer |
+| 18 | `MultiSigTooManySigners` | Multisig setup exceeds the maximum allowed number of signers |
+| 19 | `MultiSigInvalidThreshold` | Multisig threshold is invalid (must be > 0 and <= number of signers) |
+| 20 | `MultiSigDuplicateSigner` | Multisig setup contains duplicate signers |
+| 21 | `AdminTransferPending` | A new `propose_admin_transfer` was attempted while one was already pending execution or cancellation |
+| 22 | `NoPendingAdminTransfer` | `execute_admin_transfer` / `cancel_admin_transfer_proposal` was called with no proposal currently pending |
+| 23 | `MultiSigThresholdNotMet` | `execute_admin_transfer` was called before the proposal's multisig approval threshold was reached |
+| 24 | `DisputeAlreadyRaised` | `raise_dispute` was re-entered for a milestone whose dispute lock is still held, i.e |
+| 25 | `MultiSigEmptyBalance` | Retained for error-code stability — no longer emitted |
+| 26 | `TaxWithholdingInProgress` | A guarded endpoint was called while `tax_withholding_deductions` is mid-execution and holds `DataKey::TaxWithholdingExecutionLock` |
+| 27 | `PlatformFeeAllocationInProgress` | A guarded endpoint was called while a platform-fee allocation is mid-execution and holds `DataKey::PlatformFeeAllocationLock` |
+| 28 | `EmergencyPauseInProgress` | A guarded endpoint was called while an emergency pause transition is mid-execution and holds `DataKey::EpLk` |
+| 29 | `AlreadyPaused` | `emergency_pause` was called while the contract is already paused |
+| 30 | `NotPaused` | `emergency_unpause`, or a pause-gated endpoint such as `emergency_pause_claim_refund`, was called while the contract is not paused |
+| 31 | `InvalidAllocationWeights` | A weight vector passed to `emergency_pause_allocation` was empty, exceeded the party cap, contained a negative weight, or summed to zero |
+| 32 | `EmptyBalance` | An emergency refund / pause-gated endpoint was called while the contract holds zero token balance, so there is nothing to settle |
+| 33 | `TimeExtInProgress` | A guarded endpoint was called while `milestone_time_extensions` is mid-execution and holds `DataKey::TimeExtExecutionLock` |
+| 34 | `PaymentStreamingInProgress` | A guarded endpoint was called while `payment_streaming_milestones` is mid-execution and holds `DataKey::PaymentStreamingExecutionLock` |
+| 35 | `FeeTooHigh` | A platform-fee allocation exceeded its per-party cap: treasury above `MAX_TREASURY_FEE_BPS` or client above `MAX_CLIENT_FEE_BPS` |
+| 36 | `ArithmeticOverflow` | A checked `i128` operation inside a ratio/allocation computation would have overflowed or underflowed |
+| 37 | `InsufficientBalance` | A settlement asked to distribute more than the contract currently holds in the escrowed token |
+| 38 | `InvalidDisputeTimeout` | A dispute timeout must be greater than zero |
+| 39 | `DisputeTimeoutNotReached` | The configured dispute timeout has not elapsed yet |
+| 40 | `InvalidFundingMode` | `fund` was called on a PerMilestone escrow, or `fund_milestone` was called on an Upfront escrow |
+| 41 | `MaxRevisions` | `request_revision` was called after `MAX_REVISIONS` revisions |
+| 42 | `NothingToSweep` | `sweep_excess` found no recoverable surplus |
+| 43 | `NotAccepted` | A delivery or dispute endpoint was called before both the freelancer (`accept_job`) and the arbiter (`accept_arbiter`) accepted the job |
+| 44 | `InvalidParties` | `initialize` was called with overlapping party addresses |
+| 45 | `TooManyMilestones` | `add_milestone` was called on a job that already carries `MAX_MILESTONES` milestones |
+| 46 | `EvidenceLimitReached` | `submit_evidence` was called after `MAX_DISPUTE_EVIDENCE_ENTRIES` hashes had already been recorded for the milestone's current dispute |
+| 47 | `InvalidDuration` | `auto_release_seconds` is zero or above `MAX_AUTO_RELEASE_SECONDS` |
+| 48 | `WhitelistFull` | The whitelist already contains `MAX_WHITELIST_SIZE` (50) entries |
+| 49 | `WhitelistMinimum` | Removing a token would leave the whitelist empty (at least one token must remain) |
+| 50 | `TooManyParties` | A ratio vector exceeds the maximum allowed number of parties (255) |
+
 ## Milestone States
 
 Pending → Delivered → Released

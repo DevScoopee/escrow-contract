@@ -2409,7 +2409,7 @@ fn test_remove_whitelisted_token_fails_when_invalid_amount() {
     );
 
     let result = client.try_remove_whitelisted_token(&admin_addr, &token1);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::WhitelistMinimum)));
 }
 
 #[test]
@@ -4503,7 +4503,7 @@ fn test_initialize_zero_auto_release_seconds_fails() {
         &amounts,
         &crate::spec_hashes_for(&amounts),
     );
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::InvalidDuration)));
 }
 
 #[test]
@@ -5557,7 +5557,7 @@ fn test_claim_auto_release_overflow_checked_math_returns_error() {
     // The checked_add inside claim_auto_release must catch the overflow and
     // return Error::InvalidAmount rather than panicking.
     let result = client.try_claim_auto_release(&freelancer_addr, &0u32);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::ArithmeticOverflow)));
 }
 
 // ============================================================================
@@ -6403,7 +6403,7 @@ fn test_initialize_state_transition_matrix() {
 
 /// Boundary test 7 ΓÇö AUTO_RELEASE_SECONDS ZERO:
 /// `initialize` must reject `auto_release_seconds = 0` with
-/// `Error::InvalidAmount` so invalid job configuration cannot be persisted.
+/// `Error::InvalidDuration` so invalid job configuration cannot be persisted.
 #[test]
 fn test_initialize_auto_release_seconds_zero_fails() {
     let env = Env::default();
@@ -6432,7 +6432,7 @@ fn test_initialize_auto_release_seconds_zero_fails() {
         &amounts,
         &crate::spec_hashes_for(&amounts),
     );
-    assert_eq!(init_result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(init_result, Err(Ok(Error::InvalidDuration)));
 }
 
 /// The version-bump arithmetic in upgrade uses checked_add.  Verify the guard
@@ -6500,7 +6500,7 @@ fn test_upgrade_version_at_max_does_not_return_unauthorized() {
 /// Overflow-protection test 1 ΓÇö CAPACITY CAP BOUNDARY (exactly at cap):
 /// Adding tokens one-by-one until the whitelist reaches MAX_WHITELIST_SIZE (50)
 /// must succeed for every addition up to and including the 50th token.  The
-/// 51st addition must be rejected with `Error::InvalidAmount`, proving that
+/// 51st addition must be rejected with `Error::WhitelistFull`, proving that
 /// the `u32` length counter can never overflow through this call path.
 #[test]
 fn test_add_whitelisted_token_at_capacity_fails() {
@@ -6544,12 +6544,12 @@ fn test_add_whitelisted_token_at_capacity_fails() {
     let whitelist = client.get_whitelisted_tokens();
     assert_eq!(whitelist.len(), 50);
 
-    // One more addition must be rejected with InvalidAmount (overflow guard).
+    // One more addition must be rejected with WhitelistFull (overflow guard).
     let overflow_token = env
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
     let result = client.try_add_whitelisted_token(&admin_addr, &overflow_token);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::WhitelistFull)));
 
     // Whitelist length must be unchanged ΓÇö no mutation on rejected call.
     assert_eq!(client.get_whitelisted_tokens().len(), 50);
@@ -6655,7 +6655,7 @@ fn test_add_whitelisted_token_cap_resets_after_remove() {
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
     let cap_result = client.try_add_whitelisted_token(&admin_addr, &overflow_token);
-    assert_eq!(cap_result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(cap_result, Err(Ok(Error::WhitelistFull)));
 
     // Remove one token to free a slot.
     client.remove_whitelisted_token(&admin_addr, &token1);
@@ -6674,7 +6674,7 @@ fn test_add_whitelisted_token_cap_resets_after_remove() {
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
     let result2 = client.try_add_whitelisted_token(&admin_addr, &yet_another);
-    assert_eq!(result2, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result2, Err(Ok(Error::WhitelistFull)));
 }
 
 /// Overflow-protection test 4 ΓÇö DUPLICATE BEFORE OVERFLOW CHECK:
@@ -9087,7 +9087,7 @@ fn test_multisig_transfer_admin_too_many_ratios_fails() {
         ratios.push_back(1_i128);
     }
     let result = client.try_compute_ratio_allocation(&100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::TooManyParties)));
 
     let mut ratios_ok = vec![&env];
     for _ in 0..255u32 {

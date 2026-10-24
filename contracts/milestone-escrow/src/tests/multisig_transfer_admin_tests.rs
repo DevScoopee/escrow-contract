@@ -126,7 +126,7 @@ fn matrix_too_many_ratios_return_invalid_amount_capacity_succeeds() {
         over_cap.push_back(1_i128);
     }
     let result = client.try_compute_ratio_allocation(&100_i128, &over_cap);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::TooManyParties)));
     assert_eq!(msigtrx_event_count(&env), 0);
 
     let mut at_cap = vec![&env];

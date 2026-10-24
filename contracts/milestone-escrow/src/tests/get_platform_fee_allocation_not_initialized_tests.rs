@@ -399,8 +399,8 @@ fn failed_initialize_leaves_no_defaulted_allocation_behind() {
         &crate::spec_hashes_for(&vec![&env, 1_000_i128]),
     );
     assert!(
-        matches!(&result, Err(Ok(Error::InvalidAmount))),
-        "initialize must fail with the typed InvalidAmount here, got {result:?}"
+        matches!(&result, Err(Ok(Error::InvalidDuration))),
+        "initialize must fail with the typed InvalidDuration here, got {result:?}"
     );
 
     assert_typed_not_initialized!(
