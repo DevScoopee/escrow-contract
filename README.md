@@ -364,3 +364,8 @@ Deployment records, including the installed wasm hash, are in
 reproducible builds, so its source commit is unknown.
 
 Explorer: `https://stellar.expert/explorer/testnet/contract/CDD5WKK3WT3QVKXMXTJNDIXE4T73FK6GGXDSD6UTJAH6YYZU52SQ4MUH`
+ 
+## Companion Repositories
+
+- Frontend: [escrow-frontend](https://github.com/Goldii-locks/escrow-frontend) — Next.js and Tailwind web client.
+- Backend: [escrow-backend](https://github.com/Goldii-locks/escrow-backend) — Express and TypeScript event indexer and transaction service.
