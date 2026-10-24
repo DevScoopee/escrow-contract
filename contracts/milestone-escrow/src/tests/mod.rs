@@ -49,6 +49,7 @@ mod freelancer_rotation_tests;
 mod fund_footprint_tests;
 mod funding_mode_tests;
 mod get_escrow_interest_yield_no_mutation_tests;
+mod get_escrow_state_no_mutation_tests;
 mod get_job_no_mutation_tests;
 mod get_milestone_no_mutation_tests;
 mod get_pending_admin_transfer_read_count_tests;

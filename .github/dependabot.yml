@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Rust dependencies (soroban-sdk and its transitive crates via Cargo.lock).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, rust]
+    groups:
+      soroban:
+        patterns: ["soroban-*", "stellar-*"]
+
+  # Pinned GitHub Actions used by CI.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]
