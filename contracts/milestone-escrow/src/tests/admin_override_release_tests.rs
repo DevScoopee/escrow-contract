@@ -122,8 +122,12 @@ fn admin_override_release_releases_funds_to_freelancer() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, freelancer_addr, _, admin_addr, token_id, _, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
     client.admin_override_release(&admin_addr, &0u32);
@@ -136,4 +140,118 @@ fn admin_override_release_releases_funds_to_freelancer() {
     assert_eq!(after.released_amount, 1_000);
     assert_eq!(after.freelancer_balance, before.freelancer_balance + 1_000);
     assert_eq!(after.contract_balance, before.contract_balance - 1_000);
+}
+
+// ── precondition gate: must be Disputed or CancelLock active ─────────────────
+
+#[test]
+fn pending_milestone_without_dispute_or_cancel_returns_invalid_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Milestone is Pending; no dispute raised, no cancel lock.
+    let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(before.status, MilestoneStatus::Pending);
+
+    let result = client.try_admin_override_release(&admin_addr, &0u32);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(release_event_count(&env), 0);
+
+    let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_ledger_unchanged(&before, &after);
+}
+
+#[test]
+fn delivered_milestone_without_dispute_or_cancel_returns_invalid_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+
+    let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(before.status, MilestoneStatus::Delivered);
+
+    let result = client.try_admin_override_release(&admin_addr, &0u32);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(release_event_count(&env), 0);
+
+    let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_ledger_unchanged(&before, &after);
+}
+
+#[test]
+fn disputed_milestone_allows_admin_override_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
+
+    let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(before.status, MilestoneStatus::Disputed);
+
+    client.admin_override_release(&admin_addr, &0u32);
+    assert_eq!(release_event_count(&env), 1);
+
+    let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(after.status, MilestoneStatus::Released);
+    assert_eq!(after.freelancer_balance, before.freelancer_balance + 1_000);
+    assert_eq!(after.contract_balance, before.contract_balance - 1_000);
+}
+
+#[test]
+fn cancel_locked_milestone_allows_admin_override_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Fire the two-party cancel lock.
+    client.cancel_escrow(&client_addr);
+    client.cancel_escrow(&freelancer_addr);
+
+    let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    // Milestone stays Pending — CancelLock is the trigger.
+    assert_eq!(before.status, MilestoneStatus::Pending);
+
+    client.admin_override_release(&admin_addr, &0u32);
+    assert_eq!(release_event_count(&env), 1);
+
+    let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(after.status, MilestoneStatus::Released);
+    assert_eq!(after.freelancer_balance, before.freelancer_balance + 1_000);
+    assert_eq!(after.contract_balance, before.contract_balance - 1_000);
+}
+
+#[test]
+fn admin_override_release_rejects_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
+    client.admin_pause_escrow(&admin_addr);
+
+    let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_eq!(before.status, MilestoneStatus::Disputed);
+
+    let result = client.try_admin_override_release(&admin_addr, &0u32);
+    assert_eq!(result, Err(Ok(Error::Paused)));
+    assert_eq!(release_event_count(&env), 0);
+
+    let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
+    assert_ledger_unchanged(&before, &after);
 }

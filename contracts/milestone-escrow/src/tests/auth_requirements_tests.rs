@@ -1575,7 +1575,11 @@ fn admin_override_release_wrong_signer_fails() {
 #[test]
 fn admin_override_release_correct_signer_succeeds_and_auths_match() {
     let env = Env::default();
-    let (contract_id, admin, _client, _freelancer, _arbiter, _token, escrow) = setup_funded(&env);
+    let (contract_id, admin, client, freelancer, _arbiter, _token, escrow) = setup_funded(&env);
+    // The override needs a disputed milestone (or a cancel lock), see #687.
+    env.mock_all_auths();
+    escrow.mark_delivered(&freelancer, &0u32);
+    escrow.raise_dispute(&client, &0u32, &dispute_reason_hash(&env));
     env.mock_auths(&[MockAuth {
         address: &admin,
         invoke: &MockAuthInvoke {
@@ -1621,7 +1625,11 @@ fn admin_override_refund_wrong_signer_fails() {
 #[test]
 fn admin_override_refund_correct_signer_succeeds_and_auths_match() {
     let env = Env::default();
-    let (contract_id, admin, _client, _freelancer, _arbiter, _token, escrow) = setup_funded(&env);
+    let (contract_id, admin, client, freelancer, _arbiter, _token, escrow) = setup_funded(&env);
+    // The override needs a disputed milestone (or a cancel lock), see #687.
+    env.mock_all_auths();
+    escrow.mark_delivered(&freelancer, &0u32);
+    escrow.raise_dispute(&client, &0u32, &dispute_reason_hash(&env));
     env.mock_auths(&[MockAuth {
         address: &admin,
         invoke: &MockAuthInvoke {

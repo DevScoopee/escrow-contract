@@ -3148,7 +3148,12 @@ fn test_admin_override_release_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     // Should succeed
     client.admin_override_release(&admin_addr, &0u32);
@@ -3171,7 +3176,8 @@ fn test_admin_override_release_with_yield() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     // Simulate setting yield accrued
     env.as_contract(&client.address, || {
@@ -3179,6 +3185,10 @@ fn test_admin_override_release_with_yield() {
             .persistent()
             .set(&DataKey::YieldAccrued, &123_i128);
     });
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     client.admin_override_release(&admin_addr, &0u32);
 
@@ -3202,7 +3212,8 @@ fn test_admin_override_release_zero_remaining_returns_invalid_amount() {
     let (_, _, _, admin_addr, _, contract_id, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    // Force released_amount == amount so remaining == 0.
+    // Force released_amount == amount so remaining == 0, and set Disputed
+    // so the precondition gate passes before the arithmetic guard fires.
     env.as_contract(&contract_id, || {
         let mut milestone: Milestone = env
             .storage()
@@ -3210,6 +3221,7 @@ fn test_admin_override_release_zero_remaining_returns_invalid_amount() {
             .get(&DataKey::Milestone(0u32))
             .unwrap();
         milestone.released_amount = milestone.amount;
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3232,6 +3244,7 @@ fn test_admin_override_release_overflow_released_gt_amount_returns_invalid_amoun
 
     // Set released_amount to i128::MAX so that amount - released_amount
     // wraps (or overflows). checked_sub must catch this.
+    // Also set Disputed so the precondition gate passes.
     env.as_contract(&contract_id, || {
         let mut milestone: Milestone = env
             .storage()
@@ -3239,6 +3252,7 @@ fn test_admin_override_release_overflow_released_gt_amount_returns_invalid_amoun
             .get(&DataKey::Milestone(0u32))
             .unwrap();
         milestone.released_amount = i128::MAX;
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3271,6 +3285,8 @@ fn test_admin_override_release_i128_max_amount_succeeds() {
         // The key invariant is amount > 0 and released_amount == 0, which is
         // already the funded state — so we just verify no panic occurs.
         milestone.released_amount = 0;
+        // Set Disputed so the precondition gate passes.
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3298,6 +3314,8 @@ fn test_admin_override_release_i128_min_amount_returns_invalid_amount() {
             .unwrap();
         milestone.amount = i128::MIN;
         milestone.released_amount = 0;
+        // Set Disputed so the precondition gate passes.
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3326,6 +3344,8 @@ fn test_admin_override_release_both_min_returns_invalid_amount() {
             .unwrap();
         milestone.amount = i128::MIN;
         milestone.released_amount = i128::MIN;
+        // Set Disputed so the precondition gate passes.
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3355,6 +3375,8 @@ fn test_admin_override_release_max_minus_min_overflow_returns_invalid_amount() {
         milestone.amount = i128::MAX;
         // released_amount is negative — large magnitude means sub overflows.
         milestone.released_amount = i128::MIN;
+        // Set Disputed so the precondition gate passes.
+        milestone.status = MilestoneStatus::Disputed;
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(0u32), &milestone);
@@ -3375,11 +3397,15 @@ fn test_admin_override_refund_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, _, _, admin_addr, token_id, _, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     let token = token::Client::new(&env, &token_id);
     let client_before = token.balance(&client_addr);
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     client.admin_override_refund(&admin_addr, &0u32);
 
@@ -3407,7 +3433,7 @@ fn test_admin_override_refund_clears_nonzero_yield() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, contract_id, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     // Seed a non-zero yield value.
@@ -3416,6 +3442,10 @@ fn test_admin_override_refund_clears_nonzero_yield() {
             .persistent()
             .set(&DataKey::YieldAccrued, &500_i128);
     });
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     client.admin_override_refund(&admin_addr, &0u32);
 
@@ -3437,7 +3467,7 @@ fn test_admin_override_refund_skips_yield_write_when_already_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, contract_id, client) =
+    let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     // Confirm YieldAccrued starts absent (treated as 0).
@@ -3445,6 +3475,10 @@ fn test_admin_override_refund_skips_yield_write_when_already_zero() {
         env.storage().persistent().get(&DataKey::YieldAccrued)
     });
     assert!(before.is_none(), "YieldAccrued should not exist yet");
+
+    // Raise a dispute so the override precondition is satisfied.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     client.admin_override_refund(&admin_addr, &0u32);
 
@@ -3465,7 +3499,12 @@ fn test_admin_override_refund_on_refunded_milestone_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    // Raise a dispute so the first override succeeds.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
 
     // First call settles the milestone.
     client.admin_override_refund(&admin_addr, &0u32);
@@ -3481,9 +3520,12 @@ fn test_admin_override_refund_on_released_milestone_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    // Release first.
+    // Raise a dispute, then release via override.
+    client.mark_delivered(&freelancer_addr, &0u32);
+    client.raise_dispute(&client_addr, &0u32, &dispute_reason_hash(&env));
     client.admin_override_release(&admin_addr, &0u32);
 
     let result = client.try_admin_override_refund(&admin_addr, &0u32);
