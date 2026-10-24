@@ -1022,16 +1022,6 @@ pub struct PlatformFeeSplitCalculatedEvent {
     pub treasury_amount: i128,
 }
 
-pub struct AutoReleasedEvent {
-    pub milestone_index: u32,
-    pub freelancer: Address,
-    pub client: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub delivered_at: u64,
-    pub released_at: u64,
-    pub auto_release_seconds: u64,
-}
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransferAdminEvent {
@@ -1686,30 +1676,6 @@ pub struct EscrowPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowResumedEvent {
     pub admin: Address,
-}
-
-// ── NEW EVENTS ─────────────────────────────────────────────
-
-#[contracttype]
-pub struct WhitelistedTokenAddedEvent {
-    pub token: Address,
-}
-
-#[contracttype]
-pub struct WhitelistedTokenRemovedEvent {
-    pub token: Address,
-}
-
-#[contracttype]
-pub struct PartialReleaseApprovedEvent {
-    pub milestone_index: u32,
-    pub amount: i128,
-}
-
-#[contracttype]
-pub struct AutoReleaseClaimedEvent {
-    pub milestone_index: u32,
-    pub amount: i128,
 }
 
 #[contracttype]

@@ -8,7 +8,7 @@
 
 Admin entry points in the contract authorize through `admin.require_auth()` and compare the supplied address with the stored `DataKey::Admin` ([authorization helpers](contracts/milestone-escrow/src/lib.rs)). This supports Stellar account authorization, including account signers and thresholds, without contract-specific multisig checks on each admin method.
 
-The contract also maintains its own signer configuration, approval records, admin-transfer proposals, multisig locks, overrides, and related events. That is a separate authorization system with a larger state and behavior surface. The frontend currently has a generic Soroban transaction builder in [`app/lib/contract.ts`](app/lib/contract.ts); it does not contain multisig transaction assembly or signature-collection hooks.
+The contract also maintains its own signer configuration, approval records, admin-transfer proposals, multisig locks, overrides, and related events. That is a separate authorization system with a larger state and behavior surface. The frontend currently has a generic Soroban transaction builder in [`app/lib`](https://github.com/Goldii-locks/escrow-frontend/tree/main/app/lib) of [escrow-frontend](https://github.com/Goldii-locks/escrow-frontend); it does not contain multisig transaction assembly or signature-collection hooks.
 
 ## Comparison
 
