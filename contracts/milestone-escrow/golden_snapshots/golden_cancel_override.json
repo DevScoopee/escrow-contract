@@ -564,7 +564,7 @@
                       "symbol": "released_amount"
                     },
                     "val": {
-                      "i128": "1000"
+                      "i128": "0"
                     }
                   },
                   {
@@ -644,7 +644,7 @@
                       "symbol": "released_amount"
                     },
                     "val": {
-                      "i128": "2000"
+                      "i128": "0"
                     }
                   },
                   {

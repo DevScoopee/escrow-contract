@@ -195,7 +195,7 @@ fn test_cancel_refund_happy_path_produces_correct_amounts() {
     for idx in 0..2u32 {
         let ms = job.milestones.get(idx).unwrap();
         assert_eq!(ms.status, MilestoneStatus::Refunded);
-        assert_eq!(ms.released_amount, ms.amount);
+        assert_eq!(ms.released_amount, 0);
     }
 }
 

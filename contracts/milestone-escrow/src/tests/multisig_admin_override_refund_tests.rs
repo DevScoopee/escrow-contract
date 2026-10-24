@@ -136,7 +136,7 @@ fn locked_admin_override_refunds_client_and_clears_lock() {
     let after = snapshot_refund_ledger(&env, &client, &token_id, &client_addr);
     assert!(!after.locked);
     assert_eq!(after.status, MilestoneStatus::Refunded);
-    assert_eq!(after.released_amount, 1_000);
+    assert_eq!(after.released_amount, 0);
     assert_eq!(after.client_balance, before.client_balance + 1_000);
     assert_eq!(after.contract_balance, before.contract_balance - 1_000);
 
@@ -276,6 +276,6 @@ fn refund_valid_amount_equals_amount_minus_released_amount() {
     let job = client.get_job();
     let ms = job.milestones.get(0).unwrap();
     assert_eq!(ms.status, MilestoneStatus::Refunded);
-    assert_eq!(ms.released_amount, 1_000);
+    assert_eq!(ms.released_amount, 400); // unchanged from the partial release
     assert_eq!(token.balance(&client_addr), client_before + 600);
 }

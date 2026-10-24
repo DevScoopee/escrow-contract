@@ -6702,7 +6702,11 @@ impl MilestoneEscrow {
                 .ok_or(Error::InvalidAmount)?;
             if remaining > 0 {
                 total = total.checked_add(remaining).ok_or(Error::InvalidAmount)?;
-                milestone.released_amount = milestone.amount;
+                // `released_amount` counts what the freelancer was paid, so a
+                // refund leaves it as it was (#688).
+                if to_freelancer {
+                    milestone.released_amount = milestone.amount;
+                }
                 milestone.status = settled_status.clone();
                 // Only the persistent Milestone entry is written; the temporary
                 // MilestoneReleased flag is redundant here (issue #383).
@@ -10193,7 +10197,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
         env.storage()
@@ -11061,7 +11064,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
 
@@ -11588,7 +11590,6 @@ impl MilestoneEscrow {
         }
 
         // CEI: commit state before external call.
-        milestone.released_amount = milestone.amount;
         milestone.status = MilestoneStatus::Refunded;
         Self::store_milestone(&env, milestone_index, &milestone);
 
