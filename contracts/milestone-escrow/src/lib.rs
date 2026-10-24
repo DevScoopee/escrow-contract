@@ -6524,9 +6524,7 @@ impl MilestoneEscrow {
             if !Self::milestone_is_funded(&meta, &milestone) {
                 continue;
             }
-            if milestone.status == MilestoneStatus::Released
-                || milestone.status == MilestoneStatus::Refunded
-            {
+            if Self::is_terminal_status(&milestone.status) {
                 continue;
             }
             // Guard: a malformed entry with a negative amount or
@@ -9829,9 +9827,7 @@ impl MilestoneEscrow {
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // Terminal states have already settled funds — no double-spend.
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
 
@@ -9932,9 +9928,7 @@ impl MilestoneEscrow {
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
 
@@ -10724,9 +10718,7 @@ impl MilestoneEscrow {
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
         if record.net_amount <= 0 {
@@ -10817,9 +10809,7 @@ impl MilestoneEscrow {
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
         if record.gross_amount <= 0 {
@@ -10920,9 +10910,7 @@ impl MilestoneEscrow {
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
         if record.gross_amount <= 0 {
@@ -11217,9 +11205,7 @@ impl MilestoneEscrow {
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // Terminal states have already settled funds — no double-spend.
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
 
@@ -11341,9 +11327,7 @@ impl MilestoneEscrow {
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
         Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
-        if milestone.status == MilestoneStatus::Released
-            || milestone.status == MilestoneStatus::Refunded
-        {
+        if Self::is_terminal_status(&milestone.status) {
             return Err(Error::InvalidStatus);
         }
 
