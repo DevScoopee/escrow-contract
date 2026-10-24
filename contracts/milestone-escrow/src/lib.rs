@@ -227,6 +227,9 @@ const MAX_MILESTONES: u32 = 50;
 const ACCEPTANCE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 const BPS_SCALE: u32 = 10_000;
+// Keep active escrow state available for roughly one year of ledger time.
+const TTL_THRESHOLD: u32 = 30 * 24 * 60 * 5;
+const TTL_EXTEND_TO: u32 = 365 * 24 * 60 * 5;
 
 /// Maximum arbiter fee in basis points (1,000 = 10 %), issue #738.
 const MAX_ARBITER_FEE_BPS: u32 = 1_000;
@@ -1798,6 +1801,12 @@ pub struct MilestoneEscrow;
 #[allow(deprecated)]
 #[contractimpl]
 impl MilestoneEscrow {
+    fn bump(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
     fn load_admin(env: &Env) -> Result<Address, Error> {
         env.storage()
             .persistent()
@@ -2678,6 +2687,12 @@ impl MilestoneEscrow {
         env.storage()
             .persistent()
             .set(&DataKey::Milestone(index), milestone);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Milestone(index),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
+        Self::bump(env);
     }
 
     fn load_funding_mode(env: &Env) -> FundingMode {
@@ -4586,6 +4601,9 @@ impl MilestoneEscrow {
         }
 
         let milestone = Self::load_milestone(&env, milestone_index)?;
+        // A deadline extension changes the freelancer's guaranteed release time;
+        // require their explicit consent instead of allowing unilateral delay.
+        meta.freelancer.require_auth();
         if milestone.status != MilestoneStatus::Delivered
             && milestone.status != MilestoneStatus::PartiallyReleased
         {
