@@ -27,6 +27,7 @@ mod admin_transfer_target_tests;
 mod approve_milestones_tests;
 mod arbiter_fee_tests;
 mod arbitration_split_event_tests;
+mod auth_requirements_tests;
 mod cancel_admin_transfer_tests;
 mod cancel_approval_ttl_tests;
 mod cancel_escrow_split_refund_guards_tests;
