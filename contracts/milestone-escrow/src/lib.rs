@@ -7336,9 +7336,6 @@ impl MilestoneEscrow {
     /// The guard block runs at the top of this function, before any ledger
     /// entry is read or written by the calculation itself:
     ///
-    /// * The transaction must be signed
-    ///   (`env.current_contract_address().require_auth()`), so an unsigned
-    ///   attempt is rejected before any ledger access.
     /// * The escrow must be initialised (`Self::require_initialized`), so the
     ///   split is anchored to a real job rather than a fresh instance.
     /// * No other payment-streaming split may be mid-execution and the escrow
@@ -7372,11 +7369,6 @@ impl MilestoneEscrow {
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
         Self::ensure_migrated(&env)?;
-        // Authorization: the caller must have signed this transaction. The
-        // SDK aborts the call before any ledger access if the signature is
-        // missing, so an unsigned attempt is rejected outright.
-        env.current_contract_address().require_auth();
-
         // Precondition: the escrow must be initialized so the split is anchored
         // to a real job rather than a fresh or uninitialized instance. This is
         // the same guard used by every other mutating endpoint.
@@ -7597,11 +7589,6 @@ impl MilestoneEscrow {
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
         Self::ensure_migrated(&env)?;
-        // Authorization: the caller must have signed this transaction. The
-        // SDK aborts the call before any ledger access if the signature is
-        // missing, so an unsigned attempt is rejected outright.
-        env.current_contract_address().require_auth();
-
         // Precondition: the escrow must be initialized so the split is anchored
         // to a real job rather than a fresh or uninitialized instance. This is
         // the same guard used by every other mutating endpoint.
