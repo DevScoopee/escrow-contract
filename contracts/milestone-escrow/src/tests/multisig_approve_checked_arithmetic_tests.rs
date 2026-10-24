@@ -35,7 +35,7 @@
 //! count.
 
 use super::*;
-use soroban_sdk::testutils::storage::Temporary as _;
+use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::EnvTestConfig;
 use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Map, Val};
 
@@ -144,8 +144,8 @@ fn ensure_proposal(env: &Env, escrow: &MilestoneEscrowClient<'_>, proposal_id: u
 
 /// Every temporary-storage entry the contract owns, for "nothing was written"
 /// comparisons.
-fn temporary_entries(env: &Env, contract_id: &Address) -> Map<Val, Val> {
-    env.as_contract(contract_id, || env.storage().temporary().all())
+fn persistent_entries(env: &Env, contract_id: &Address) -> Map<Val, Val> {
+    env.as_contract(contract_id, || env.storage().persistent().all())
 }
 
 /// Number of `msigappr` events in the **most recent** invocation. The SDK's
@@ -210,7 +210,7 @@ fn test_multisig_approve_index_at_bitmap_width_returns_arithmetic_overflow() {
     assert_eq!(out_of_range, Err(Ok(Error::ArithmeticOverflow)));
 }
 
-/// The rejected call must leave the ledger exactly as it found it: no temporary
+/// The rejected call must leave the ledger exactly as it found it: no persistent
 /// bitmap entry, no event, and the public view still reporting zero approvals.
 #[test]
 fn test_multisig_approve_out_of_range_index_writes_nothing() {
@@ -220,8 +220,8 @@ fn test_multisig_approve_out_of_range_index_writes_nothing() {
     let oversized = oversized_signers(&env, signers);
     overwrite_signers(&env, &contract_id, &oversized);
 
-    let before = temporary_entries(&env, &contract_id);
     crate::tests::seed_admin_proposal(&env, &escrow.address, 1);
+    let before = persistent_entries(&env, &contract_id);
 
     let out_of_range = escrow.try_multisig_approve(&oversized.get(MAX_SIGNERS).unwrap(), &1u32);
     assert_eq!(out_of_range, Err(Ok(Error::ArithmeticOverflow)));
@@ -230,7 +230,7 @@ fn test_multisig_approve_out_of_range_index_writes_nothing() {
     assert_eq!(msigappr_event_count(&env), 0);
 
     assert_eq!(stored_bitmap(&env, &contract_id, 1u32), None);
-    assert_eq!(temporary_entries(&env, &contract_id), before);
+    assert_eq!(persistent_entries(&env, &contract_id), before);
 
     let state = escrow.is_multisig_approved(&1u32);
     assert!(!state.approved);
@@ -257,13 +257,13 @@ fn test_multisig_approve_out_of_range_index_keeps_existing_bitmap() {
     let oversized = oversized_signers(&env, signers);
     overwrite_signers(&env, &contract_id, &oversized);
 
-    let before = temporary_entries(&env, &contract_id);
+    let before = persistent_entries(&env, &contract_id);
     let out_of_range = escrow.try_multisig_approve(&oversized.get(MAX_SIGNERS).unwrap(), &9u32);
     assert_eq!(out_of_range, Err(Ok(Error::ArithmeticOverflow)));
     assert_eq!(msigappr_event_count(&env), 0);
 
     assert_eq!(stored_bitmap(&env, &contract_id, 9u32), Some(1u32));
-    assert_eq!(temporary_entries(&env, &contract_id), before);
+    assert_eq!(persistent_entries(&env, &contract_id), before);
 
     let state = escrow.is_multisig_approved(&9u32);
     assert_eq!(state.bitmap, 1);

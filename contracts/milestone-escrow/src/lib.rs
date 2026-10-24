@@ -479,9 +479,11 @@ pub enum DataKey {
     /// entry instead of occupying its own storage key; read only as the legacy
     /// fallback in `load_multisig_config`.
     MultiSigThreshold,
-    /// Transient approval-bitmap for a given proposal index.  Uses **temporary**
-    /// storage so the ledger footprint does not persist beyond the proposal
-    /// lifecycle.  Each bit position corresponds to a signer index in the
+    /// Legacy approval bitmap for a given proposal index, no longer read or
+    /// written: approvals live in the persistent `AdminProposal` record
+    /// (issue #785), which also keeps them past TTL expiry for M-of-N
+    /// governance that spans days (issue #716).  Each bit position corresponds
+    /// to a signer index in the
     /// `MultiSigSigners` vec; a set bit means that signer has approved.
     /// The `u32` value is treated as a bitset, supporting up to 32 signers.
     /// Key type: `u32` (the proposal index) — significantly smaller than a
