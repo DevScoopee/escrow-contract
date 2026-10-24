@@ -32,6 +32,7 @@ addresses as further topics, so RPC `getEvents` can filter by participant
 | `unaccref` | `UnacceptedWithdrawnEvent`       | state change      |
 | `withdraw` | `WithdrawnEvent`                 | state change      |
 | `freerot`  | `FreelancerRotatedEvent`         | state change      |
+| `arbchg`   | `ArbiterReplacedEvent`           | state change      |
 | `msfund`   | `MilestoneFundedEvent`           | state change      |
 | `ms_add`   | `MilestoneAddedEvent`            | state change      |
 | `ms_reduce`| `MilestoneReducedEvent`          | state change      |
