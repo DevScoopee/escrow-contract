@@ -5,10 +5,10 @@
 //! The endpoint must reject an uninitialised contract with `NotInitialized`,
 //! a non-admin caller with `Unauthorized`, and a mid-flight pause/resume
 //! transition with `EmergencyPauseInProgress`, all before any ledger entry
-//! is written.  Calling pause on an already-paused escrow must be an idempotent
-//! no-op: `Ok(())` with zero storage mutation and no event.  A first pause
-//! must set `DataKey::Paused = true`, emit exactly one `pause` event, and
-//! leave the emergency-pause lock clear.
+//! is written.  Calling pause on an already-paused escrow must be rejected
+//! with `AlreadyPaused` so an operator cannot mistake a redundant call for
+//! having taken fresh action.  A first pause must set `DataKey::Paused = true`,
+//! emit exactly one `pause` event, and leave the emergency-pause lock clear.
 
 use super::*;
 use crate::{DataKey, Error, EscrowPausedEvent};
@@ -150,10 +150,10 @@ fn pause_rejects_when_emergency_lock_held() {
     assert_eq!(pause_event_count(&env), 0);
 }
 
-// ── idempotent no-op ─────────────────────────────────────────────────────────
+// ── redundant pause rejection ───────────────────────────────────────────────────
 
 #[test]
-fn pause_is_idempotent_when_already_paused() {
+fn pause_rejects_redundant_call_with_already_paused() {
     let env = test_env();
     let (client, admin) = initialised_escrow(&env);
     let contract_id = client.address.clone();
@@ -167,10 +167,15 @@ fn pause_is_idempotent_when_already_paused() {
     assert!(is_paused(&env, &contract_id));
     assert!(!is_lock_held(&env, &contract_id));
 
-    // Second pause — must be a no-op, so its invocation emits nothing at all.
-    assert_eq!(client.try_admin_pause_escrow(&admin), Ok(Ok(())));
+    // Second pause — must be rejected with AlreadyPaused so an operator
+    // cannot mistake a redundant call for having taken fresh action.
+    assert_eq!(
+        client.try_admin_pause_escrow(&admin),
+        Err(Ok(Error::AlreadyPaused))
+    );
     assert_eq!(pause_event_count(&env), 0);
-    // Lock not left behind.
+    // State unchanged.
+    assert!(is_paused(&env, &contract_id));
     assert!(!is_lock_held(&env, &contract_id));
 }
 

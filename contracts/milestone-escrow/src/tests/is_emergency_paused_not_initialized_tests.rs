@@ -375,7 +375,7 @@ fn test_is_emergency_paused_returns_true_after_admin_override_pause() {
     let (_, _, _, admin_addr, _, contract_id, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
 
     let before = capture_ledger(&env, &contract_id);
     let result = client.try_is_emergency_paused();
@@ -395,7 +395,7 @@ fn test_is_emergency_paused_returns_false_after_admin_override_unpause() {
     let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     client.emergency_pause(&client_addr, &freelancer_addr);
-    client.emergency_pause_admin_override(&admin_addr, &false);
+    client.emergency_unpause(&admin_addr);
 
     let before = capture_ledger(&env, &contract_id);
     let result = client.try_is_emergency_paused();
@@ -451,9 +451,9 @@ fn test_is_emergency_paused_always_matches_stored_flag() {
     assert_matches_stored(&contract_id, &client);
     client.emergency_pause(&client_addr, &freelancer_addr);
     assert_matches_stored(&contract_id, &client);
-    client.emergency_pause_admin_override(&admin_addr, &false);
+    client.emergency_unpause(&admin_addr);
     assert_matches_stored(&contract_id, &client);
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     assert_matches_stored(&contract_id, &client);
     client.emergency_unpause(&admin_addr);
     assert_matches_stored(&contract_id, &client);

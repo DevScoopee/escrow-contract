@@ -7736,12 +7736,11 @@ fn test_dispute_flag_only_sets_targeted_milestone() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TASK: emergency_pause_split_refund distribution pathways
 // ═══════════════════════════════════════════════════════════════════════════════
-
 /// A funded escrow frozen by `emergency_pause_admin_override`, plus its admin.
 fn emergency_paused_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>) {
     env.mock_all_auths();
     let (_, _, _, admin, _, _, client) = setup_funded_escrow(env, vec![env, 1_000_i128]);
-    client.emergency_pause_admin_override(&admin, &true);
+    client.emergency_pause_admin_override(&admin);
     (admin, client)
 }
 

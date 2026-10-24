@@ -101,7 +101,7 @@ fn is_emergency_paused_does_not_mutate_ledger_when_unpaused() {
 fn is_emergency_paused_does_not_mutate_ledger_when_paused() {
     let env = Env::default();
     let (_, admin, escrow) = initialized_escrow(&env);
-    escrow.emergency_pause_admin_override(&admin, &true);
+    escrow.emergency_pause_admin_override(&admin);
 
     let before = env.to_ledger_snapshot();
     let paused = escrow.is_emergency_paused();
@@ -196,7 +196,7 @@ fn is_emergency_paused_matches_stored_flag_in_every_state() {
 fn repeated_is_emergency_paused_calls_are_stable() {
     let env = Env::default();
     let (_, admin, escrow) = initialized_escrow(&env);
-    escrow.emergency_pause_admin_override(&admin, &true);
+    escrow.emergency_pause_admin_override(&admin);
 
     let before = env.to_ledger_snapshot();
     for _ in 0..5 {
@@ -237,7 +237,7 @@ fn emergency_paused_is_true_after_pause() {
     let env = Env::default();
     let (_, admin, escrow) = initialized_escrow(&env);
 
-    escrow.emergency_pause_admin_override(&admin, &true);
+    escrow.emergency_pause_admin_override(&admin);
     assert!(escrow.is_emergency_paused());
 }
 
@@ -246,8 +246,8 @@ fn emergency_paused_is_false_after_unpause() {
     let env = Env::default();
     let (_, admin, escrow) = initialized_escrow(&env);
 
-    escrow.emergency_pause_admin_override(&admin, &true);
-    escrow.emergency_pause_admin_override(&admin, &false);
+    escrow.emergency_pause_admin_override(&admin);
+    escrow.emergency_unpause(&admin);
     assert!(!escrow.is_emergency_paused());
 }
 

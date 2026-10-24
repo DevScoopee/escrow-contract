@@ -103,8 +103,8 @@ fn test_emergency_pause_admin_override_happy_path_and_event() {
     let (_client_addr, _freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, milestone_amounts);
 
-    // Override to paused (true)
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    // Override to paused
+    client.emergency_pause_admin_override(&admin_addr);
 
     // Verify event immediately
     let events = crate::all_event_tuples(&env);
@@ -119,23 +119,6 @@ fn test_emergency_pause_admin_override_happy_path_and_event() {
 
     // Verify status
     assert!(client.is_emergency_paused());
-
-    // Override to unpaused (false)
-    client.emergency_pause_admin_override(&admin_addr, &false);
-
-    // Verify event immediately
-    let events2 = crate::all_event_tuples(&env);
-    let last_event2 = events2.last().unwrap();
-    let topic2: Symbol = last_event2.1.get(0).unwrap().try_into_val(&env).unwrap();
-    assert_eq!(topic2, symbol_short!("emoverrid"));
-    let parsed_event2 = EmergencyPauseAdminOverrideEvent::from_val(&env, &last_event2.2);
-    assert_eq!(parsed_event2.admin, admin_addr);
-    assert_eq!(parsed_event2.contract_id, client.address);
-    assert!(!parsed_event2.paused);
-    assert!(parsed_event2.previous);
-
-    // Verify status
-    assert!(!client.is_emergency_paused());
 }
 
 // ── issue #398: structured event reconciles with persisted state ────────────
@@ -151,7 +134,7 @@ fn test_emergency_pause_admin_override_event_reconciles_with_persisted_state() {
 
     // false → true
     let before = client.is_emergency_paused();
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
 
     let ev = last_emoverrid_event(&env);
     assert_eq!(emoverrid_event_count(&env), 1);
@@ -171,19 +154,6 @@ fn test_emergency_pause_admin_override_event_reconciles_with_persisted_state() {
     let paused_after: Option<bool> =
         env.as_contract(&contract_id, || env.storage().instance().get(&DataKey::Ep));
     assert_eq!(paused_after, Some(ev.paused));
-
-    // true → false
-    let before2 = client.is_emergency_paused();
-    client.emergency_pause_admin_override(&admin_addr, &false);
-
-    let ev2 = last_emoverrid_event(&env);
-    assert_eq!(ev2.paused, client.is_emergency_paused());
-    assert!(!ev2.paused);
-    assert_eq!(ev2.previous, before2);
-    assert!(ev2.previous);
-    let paused_after2: Option<bool> =
-        env.as_contract(&contract_id, || env.storage().instance().get(&DataKey::Ep));
-    assert_eq!(paused_after2, Some(false));
 }
 
 #[test]
@@ -194,7 +164,7 @@ fn test_emergency_pause_admin_override_no_event_on_unauthorized() {
     let milestone_amounts = vec![&env, 1000_i128];
     let (client_addr, _, _, _, _, _, client) = setup_funded_escrow(&env, milestone_amounts);
 
-    let res = client.try_emergency_pause_admin_override(&client_addr, &true);
+    let res = client.try_emergency_pause_admin_override(&client_addr);
     assert_eq!(res, Err(Ok(Error::Unauthorized)));
     assert_eq!(emoverrid_event_count(&env), 0);
 }
@@ -208,15 +178,10 @@ fn test_emergency_pause_admin_override_no_event_on_invalid_state() {
     let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, milestone_amounts);
 
-    // Not paused → overriding to `false` is a no-op transition.
-    let res = client.try_emergency_pause_admin_override(&admin_addr, &false);
-    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
-    assert_eq!(emoverrid_event_count(&env), 0);
-
     // Paused → overriding to `true` is a no-op transition.
     client.emergency_pause(&client_addr, &freelancer_addr);
-    let res = client.try_emergency_pause_admin_override(&admin_addr, &true);
-    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
+    let res = client.try_emergency_pause_admin_override(&admin_addr);
+    assert_eq!(res, Err(Ok(Error::AlreadyPaused)));
     assert_eq!(emoverrid_event_count(&env), 0);
 }
 
@@ -306,7 +271,7 @@ fn test_emergency_pause_admin_override_unauthorized() {
     let (client_addr, _, _, _, _, _, client) = setup_funded_escrow(&env, milestone_amounts);
 
     // Call override as client (should fail)
-    let res = client.try_emergency_pause_admin_override(&client_addr, &true);
+    let res = client.try_emergency_pause_admin_override(&client_addr);
     assert_eq!(res, Err(Ok(Error::Unauthorized)));
 }
 
@@ -319,16 +284,12 @@ fn test_emergency_pause_admin_override_invalid_state() {
     let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, milestone_amounts);
 
-    // Initially not paused. Calling override to false should fail.
-    let res = client.try_emergency_pause_admin_override(&admin_addr, &false);
-    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
-
     // Pause it
     client.emergency_pause(&client_addr, &freelancer_addr);
 
-    // Already paused. Calling override to true should fail.
-    let res = client.try_emergency_pause_admin_override(&admin_addr, &true);
-    assert_eq!(res, Err(Ok(Error::InvalidStatus)));
+    // Already paused. Calling override should fail with AlreadyPaused.
+    let res = client.try_emergency_pause_admin_override(&admin_addr);
+    assert_eq!(res, Err(Ok(Error::AlreadyPaused)));
 }
 
 // ── #451: emergency_unpause storage-footprint tests ─────────────────────────
@@ -510,7 +471,7 @@ fn parties_cannot_lift_admin_pause() {
     env.mock_all_auths();
     let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, vec![&env, 1000_i128]);
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     assert_eq!(
         client.try_emergency_unpause_parties(&client_addr, &freelancer_addr),
         Err(Ok(Error::Unauthorized))
