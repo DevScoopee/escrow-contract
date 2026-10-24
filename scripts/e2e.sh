@@ -16,6 +16,7 @@
 # Environment overrides:
 #   NETWORK_NAME   local network name (default: milestone-e2e)
 #   KEEP_NETWORK=1 leave the local network running on exit (for debugging)
+#   QUICKSTART_TAG stellar/quickstart image tag (default: v678-b1525.1-latest)
 
 set -euo pipefail
 
@@ -24,6 +25,10 @@ MANIFEST="${ROOT_DIR}/contracts/milestone-escrow/Cargo.toml"
 NETWORK="${NETWORK:-local}"
 NETWORK_NAME="${NETWORK_NAME:-milestone-e2e}"
 KEEP_NETWORK="${KEEP_NETWORK:-0}"
+# Pinned: the quickstart image moves daily. Its RPC 30.0.0 builds (from
+# 2026-10-22) fail every simulation from stellar-cli 28 with
+# "HostError: Error(Context, InternalError)"; this one runs RPC 29.0.1.
+QUICKSTART_TAG="${QUICKSTART_TAG:-v678-b1525.1-latest}"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n\033[1;31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -35,7 +40,7 @@ require() {
 cleanup() {
   if [[ "${KEEP_NETWORK}" != "1" ]]; then
     log "Stopping local Stellar network"
-    stellar network stop "${NETWORK}" >/dev/null 2>&1 || true
+    stellar container stop "${NETWORK_NAME}" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -46,15 +51,39 @@ require docker
 require stellar
 stellar --version
 
+# `--limits unlimited`: the optimized escrow wasm is larger than the
+# 131,072-byte contract_max_size_bytes that testnet and mainnet enforce, so
+# under the default limits the deploy below fails with TxSorobanInvalid.
+# This test exercises the contract's behaviour; it does not prove the wasm
+# fits on a public network.
 log "Starting throwaway local network"
-stellar network start "${NETWORK}" --name "${NETWORK_NAME}" || true
-stellar network use "${NETWORK}" >/dev/null 2>&1 || true
+stellar container start "${NETWORK}" --name "${NETWORK_NAME}" \
+  --image-tag-override "${QUICKSTART_TAG}" --limits unlimited
+
+# The container returns before its RPC and friendbot are serving. Deploying
+# straight away fails with "client error (Connect)", so wait for both.
+log "Waiting for the local RPC to report healthy"
+for _ in $(seq 1 120); do
+  if stellar network health --network "${NETWORK}" 2>&1 | grep -qi healthy; then
+    break
+  fi
+  sleep 5
+done
+stellar network health --network "${NETWORK}" 2>&1 | grep -qi healthy \
+  || fail "local RPC did not become healthy"
 
 log "Creating and funding test identities"
 for who in admin client freelancer arbiter; do
-  if ! stellar keys address "${who}" >/dev/null 2>&1; then
-    stellar keys generate "${who}" --network "${NETWORK}" --fund >/dev/null
-  fi
+  stellar keys generate "${who}" --overwrite >/dev/null
+  funded=0
+  for _ in $(seq 1 60); do
+    if stellar keys fund "${who}" --network "${NETWORK}" >/dev/null 2>&1; then
+      funded=1
+      break
+    fi
+    sleep 5
+  done
+  [[ "${funded}" == "1" ]] || fail "friendbot did not fund '${who}'"
 done
 ADMIN="$(stellar keys address admin)"
 CLIENT_ADDR="$(stellar keys address client)"
@@ -66,9 +95,13 @@ stellar contract build --manifest-path "${MANIFEST}"
 WASM="${ROOT_DIR}/target/wasm32v1-none/release/milestone_escrow.wasm"
 [[ -f "${WASM}" ]] || fail "expected WASM at ${WASM}"
 
+# A classic asset issued by admin, wrapped in its Stellar Asset Contract.
+# Account holders need a trustline before they can hold it.
+ASSET="E2E:${ADMIN}"
+
 log "Deploying a test SAC token"
 TOKEN_ID="$(stellar contract asset deploy \
-  --asset ":${ADMIN}" \
+  --asset "${ASSET}" \
   --source admin \
   --network "${NETWORK}")"
 echo "token id: ${TOKEN_ID}"
@@ -97,6 +130,17 @@ invoke() {
     --network "${NETWORK}" \
     -- "${@:2}"
 }
+
+# Work is gated on both the freelancer and the arbiter accepting the job.
+log "Freelancer and arbiter accept the job"
+invoke freelancer accept_job --freelancer "${FREELANCER}"
+invoke arbiter accept_arbiter --arbiter "${ARBITER}"
+
+log "Opening client and freelancer trustlines"
+for who in client freelancer; do
+  stellar tx new change-trust --source-account "${who}" --line "${ASSET}" \
+    --network "${NETWORK}" >/dev/null
+done
 
 log "Minting test tokens to the client"
 stellar contract invoke \
