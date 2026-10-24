@@ -41,7 +41,6 @@ fn test_cancel_escrow_sets_lock_and_emits_event() {
     assert_eq!(topic, symbol_short!("cancel"));
     let parsed_event = CancelEscrowInitiatedEvent::from_val(&env, &last_event.2);
     assert_eq!(parsed_event.caller, freelancer_addr);
-    assert_eq!(parsed_event.contract_id, client.address);
 
     // Verify CancelLock is set to true
     let is_locked_after = env.as_contract(&client.address, || {
@@ -195,7 +194,6 @@ fn test_revoke_cancel_approval_emits_event() {
     assert_eq!(topic, symbol_short!("cancelrev"));
     let parsed = CancelApprovalRevokedEvent::from_val(&env, &last_event.2);
     assert_eq!(parsed.caller, client_addr);
-    assert_eq!(parsed.contract_id, contract_id);
     assert_eq!(parsed.approval_mask, 0);
 
     // The last remaining bit clears the key rather than storing a zero mask.

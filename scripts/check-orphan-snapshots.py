@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Fail if a committed test snapshot has no test function behind it.
+"""Fail if a committed golden snapshot has no test function behind it.
 
-Soroban writes a snapshot per test into test_snapshots/. When a test is
-renamed or deleted the file stays, and nothing notices -- 261 had built up
-this way, most of them left behind by a commit that cut test.rs from 143
-test functions to 86 while claiming to add coverage. An orphan is harmless
-on its own, but a pile of them hides the one that means a test was lost.
+Soroban's per-test snapshots under test_snapshots/ are gitignored; the only
+committed snapshots are the few golden ones in golden_snapshots/, each
+written by a test function of the same name (golden_snapshot_tests.rs).
+When such a test is renamed or deleted its file would stay behind and
+nothing would notice, so CI fails on it instead.
 """
 import glob
 import os
@@ -13,7 +13,7 @@ import re
 import sys
 
 SRC = "contracts/milestone-escrow/src/**/*.rs"
-SNAPSHOTS = "contracts/milestone-escrow/test_snapshots/**/*.json"
+SNAPSHOTS = "contracts/milestone-escrow/golden_snapshots/*.json"
 
 
 def main() -> int:
@@ -25,16 +25,16 @@ def main() -> int:
     defined = set(re.findall(r"\bfn\s+([A-Za-z0-9_]+)", source))
 
     orphans = []
-    for path in sorted(glob.glob(SNAPSHOTS, recursive=True)):
-        name = re.sub(r"\.\d+\.json$", "", os.path.basename(path))
+    for path in sorted(glob.glob(SNAPSHOTS)):
+        name = re.sub(r"\.json$", "", os.path.basename(path))
         if name not in defined:
             orphans.append((path, name))
 
     if not orphans:
-        print("test_snapshots: no orphans")
+        print("golden_snapshots: no orphans")
         return 0
 
-    print(f"test_snapshots: {len(orphans)} orphaned snapshot(s)\n")
+    print(f"golden_snapshots: {len(orphans)} orphaned snapshot(s)\n")
     for path, name in orphans:
         print(f"  {path}\n      no `fn {name}` in {SRC}")
     print(

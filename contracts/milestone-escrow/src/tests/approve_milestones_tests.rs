@@ -94,7 +94,6 @@ fn emits_one_slim_approve_event_per_milestone_in_order() {
         events,
         std::vec![
             ApprovedEvent {
-                contract_id: fx.contract_id.clone(),
                 milestone_index: 2,
                 amount: 300,
                 released_amount: 300,
@@ -102,7 +101,6 @@ fn emits_one_slim_approve_event_per_milestone_in_order() {
                 status: MilestoneStatus::Released,
             },
             ApprovedEvent {
-                contract_id: fx.contract_id.clone(),
                 milestone_index: 0,
                 amount: 100,
                 released_amount: 100,
@@ -270,7 +268,6 @@ fn approve_milestone_emits_slim_event() {
     assert_eq!(
         ApprovedEvent::from_val(&env, &events[0]),
         ApprovedEvent {
-            contract_id: fx.contract_id.clone(),
             milestone_index: 0,
             amount: 250,
             released_amount: 250,

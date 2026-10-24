@@ -391,7 +391,6 @@ fn test_admin_resume_escrow_clears_pause_and_resumes_normal_operation() {
     );
     let payload = EscrowResumedEvent::from_val(&env, &last.2);
     assert_eq!(payload.admin, admin);
-    assert_eq!(payload.contract_id, contract_id);
 
     // Pause state cleared, lock released, persisted admin untouched.
     assert!(!is_paused(&env, &contract_id), "pause flag must be cleared");

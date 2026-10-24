@@ -324,7 +324,7 @@ cargo test -p milestone-escrow
 - Disputes may only be raised on delivered or partially released milestones. The dispute timeout is set by the constructor's `settings.dispute_timeout_seconds` (non-zero; 30 days is the usual value). If neither party gets an arbitration decision by that deadline, either party may call `escalate_dispute` to return the milestone to its pre-dispute status; a restored delivered milestone gets a fresh auto-release window
 - `cancel_escrow` is a two-party handshake and a single-party approval now expires after `CANCEL_APPROVAL_TTL_SECONDS` (7 days, issue #713): an approval older than that is treated as absent, so the counter-party's call records a fresh first approval instead of locking the escrow. `CancelApprovalRecordedEvent` (`cxlappr`) carries `approved_at` so indexers can track the same window
 - `lock_escrow_interest_yield` now rejects unauthorized callers with `Unauthorized` and an illegal source state with `InvalidStatus` **before** it reads or writes the ledger entry (issue #464); authorization runs first via `require_admin_from_instance`, so a non-admin cannot probe whether an escrow is locked, and an already-locked configuration is refused rather than silently re-locked
-- Contract tests and snapshots are provided under `contracts/milestone-escrow/test_snapshots`
+- Contract tests live under `contracts/milestone-escrow/src/tests`. Soroban's per-test `test_snapshots/` are gitignored; three golden end-to-end snapshots (fund → deliver → approve, dispute → resolve, cancel → override) are committed in `contracts/milestone-escrow/golden_snapshots` and CI fails when a run changes them. After an intended change, rerun `cargo test golden_snapshot_tests` and commit the updated files.
 
 ## Escrow factory
 
@@ -382,10 +382,30 @@ stellar contract deploy \
 Record the `source_commit` and `wasm_sha256` from `dist/build-info.json` with
 the deployment, and the hash in `CHANGELOG.md`.
 
-After upgrading an existing deployment to this version, the admin should call
-`migrate_cold_config` once to move the whitelist, multisig, yield and fee
-configuration out of instance storage (issue #772). The contract keeps working
-before that call; the migration only makes every later call cheaper.
+### Upgrading a deployment: upgrade, then migrate
+
+Upgrading is always two admin calls, in this order:
+
+1. `upgrade(admin, new_wasm_hash)` installs the new code.
+2. `migrate(admin)` rewrites stored entries into the layout the new code
+   expects and records it.
+
+The contract stores the layout version it was written with
+(`schema_version()`), and the code declares the version it expects
+(`SCHEMA_VERSION`). Between the two calls they differ, and every
+state-changing endpoint returns `MigrationRequired` (error 45), so nothing
+can write an entry in the old shape or act on one misread. Getters, `upgrade`
+itself and the pause/unpause controls keep working, so an incident in that
+window can still be contained. Once `migrate` succeeds (it emits `migrate`
+with a `MigratedEvent`) normal operation resumes. Calling `migrate` again
+returns `AlreadyMigrated` (error 46). Deployments created before the marker
+existed are treated as schema 1.
+
+Schema 2 adds `spec_hash` to every stored `Milestone` (#767; old milestones
+get a zero hash) and moves the whitelist, multisig, yield and fee
+configuration out of instance storage (#772). A release that changes a stored
+type must bump `SCHEMA_VERSION` and add the step to `migrate`.
+`migrate_cold_config` remains for deployments that only need the #772 move.
 
 ## Verifying the deployed contract
 

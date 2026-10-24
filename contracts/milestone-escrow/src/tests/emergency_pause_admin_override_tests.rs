@@ -216,7 +216,6 @@ fn success_emits_exactly_one_emoverrid_event_with_correct_payload() {
     assert_eq!(event_count_for(&env, &topic), 1);
     let ev = last_override_event(&env);
     assert_eq!(ev.admin, admin_addr);
-    assert_eq!(ev.contract_id, client.address);
     assert!(ev.paused);
 }
 

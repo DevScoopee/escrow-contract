@@ -213,7 +213,7 @@ fn cancel_approval_recorded_event_carries_approved_at() {
     env.mock_all_auths();
     env.ledger().set_timestamp(START);
 
-    let (client_addr, freelancer_addr, _, _, _, contract_id, client) =
+    let (client_addr, freelancer_addr, _, _, _, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     client.cancel_escrow(&client_addr);
@@ -223,7 +223,6 @@ fn cancel_approval_recorded_event_carries_approved_at() {
     let topic: Symbol = last_event.1.get(0).unwrap().try_into_val(&env).unwrap();
     assert_eq!(topic, symbol_short!("cxlappr"));
     let parsed = CancelApprovalRecordedEvent::from_val(&env, &last_event.2);
-    assert_eq!(parsed.contract_id, contract_id);
     assert_eq!(parsed.caller, client_addr);
     assert_eq!(parsed.approval_mask, 1);
     assert_eq!(parsed.approved_at, START);

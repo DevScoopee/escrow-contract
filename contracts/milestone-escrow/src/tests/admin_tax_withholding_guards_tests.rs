@@ -204,7 +204,6 @@ fn admin_tax_success_computes_and_emits_exactly_one_event() {
     let event = last_taxwh_event(&env);
     assert_eq!(taxwh_event_count(&env), 1);
     assert_eq!(event.admin, admin_addr);
-    assert_eq!(event.contract_id, contract_id);
     assert_eq!(event.milestone_index, 0);
     assert_eq!(event.gross_amount, 1_000);
     assert_eq!(event.tax_amount, 250);
