@@ -648,3 +648,80 @@ fn tax_refund_after_partial_release_does_not_exceed_remaining_balance() {
     assert!(refunded <= 600);
     assert!(token_client.balance(&contract_id) >= 1_000);
 }
+
+// ── shared calculation (issue #728) ──────────────────────────────────────────
+
+/// Both entry points report the same numbers for the same milestone and rate,
+/// including where round-to-nearest and floor would disagree (1_005 × 50 % =
+/// 502.5), and on a partly-paid milestone (remaining basis).
+#[test]
+fn admin_and_party_tax_withholding_agree() {
+    let env = test_env();
+    env.mock_all_auths();
+
+    let (_, _, _, admin_addr, _, contract_id, client) =
+        setup_funded_escrow(&env, vec![&env, 1_005_i128]);
+
+    let record = client.tax_withholding_deductions(&0u32, &5_000u32);
+    assert_eq!(
+        client.admin_tax_withholding_deductions(&admin_addr, &0u32, &5_000u32),
+        (record.gross_amount, record.tax_amount, record.net_amount)
+    );
+    assert_eq!(record.tax_amount, 503);
+
+    env.as_contract(&contract_id, || {
+        let mut milestone: Milestone = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Milestone(0))
+            .unwrap();
+        milestone.released_amount = 5;
+        milestone.status = MilestoneStatus::PartiallyReleased;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Milestone(0), &milestone);
+    });
+
+    let record = client.tax_withholding_deductions(&0u32, &5_000u32);
+    assert_eq!(record.gross_amount, 1_000);
+    assert_eq!(
+        client.admin_tax_withholding_deductions(&admin_addr, &0u32, &5_000u32),
+        (record.gross_amount, record.tax_amount, record.net_amount)
+    );
+}
+
+/// The admin entry point rejects settled milestones, like the party one.
+#[test]
+fn admin_tax_rejects_settled_milestones() {
+    for status in [
+        MilestoneStatus::Released,
+        MilestoneStatus::Refunded,
+        MilestoneStatus::Disputed,
+    ] {
+        let env = test_env();
+        env.mock_all_auths();
+
+        let (_, _, _, admin_addr, _, contract_id, client) =
+            setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+        env.as_contract(&contract_id, || {
+            let mut milestone: Milestone = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Milestone(0))
+                .unwrap();
+            milestone.status = status.clone();
+            env.storage()
+                .persistent()
+                .set(&DataKey::Milestone(0), &milestone);
+        });
+
+        assert_eq!(
+            client.try_admin_tax_withholding_deductions(&admin_addr, &0u32, &1_000u32),
+            Err(Ok(Error::InvalidStatus))
+        );
+        assert_eq!(
+            client.try_tax_withholding_deductions(&0u32, &1_000u32),
+            Err(Ok(Error::InvalidStatus))
+        );
+    }
+}
