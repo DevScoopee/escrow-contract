@@ -110,12 +110,14 @@ fn resolve_dispute_rejects_zero_contract_balance() {
     drain(&env, &token, &contract_id, 1_000);
 
     let result = client.try_resolve_dispute(&arbiter_addr, &0u32, &false);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::InsufficientBalance)));
     assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
 
+/// A balance shortfall is rejected rather than paid out partially (#689):
+/// nothing moves and the milestone stays disputed.
 #[test]
-fn resolve_dispute_shortfall_caps_release_to_freelancer() {
+fn resolve_dispute_shortfall_release_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -123,38 +125,39 @@ fn resolve_dispute_shortfall_caps_release_to_freelancer() {
         disputed_escrow(&env, 1_000);
     drain(&env, &token, &contract_id, 700);
 
-    client.resolve_dispute(&arbiter_addr, &0u32, &true);
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter_addr, &0u32, &true),
+        Err(Ok(Error::InsufficientBalance))
+    );
 
     let token_client = token::Client::new(&env, &token);
-    assert_eq!(token_client.balance(&freelancer_addr), 300);
-    assert_eq!(token_client.balance(&contract_id), 0);
-
-    let milestone = milestone_0(&client);
-    assert_eq!(milestone.status, MilestoneStatus::Released);
-    assert_eq!(milestone.released_amount, 300);
-    assert_eq!(client.get_reputation(&client_addr), 1);
-    assert_eq!(client.get_reputation(&freelancer_addr), 1);
+    assert_eq!(token_client.balance(&freelancer_addr), 0);
+    assert_eq!(token_client.balance(&client_addr), 0);
+    assert_eq!(token_client.balance(&contract_id), 300);
+    assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
 
+/// A balance shortfall is rejected rather than paid out partially (#689):
+/// nothing moves and the milestone stays disputed.
 #[test]
-fn resolve_dispute_shortfall_caps_refund_to_client() {
+fn resolve_dispute_shortfall_refund_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client_addr, freelancer_addr, arbiter_addr, token, contract_id, client) =
         disputed_escrow(&env, 1_000);
-    drain(&env, &token, &contract_id, 600);
+    drain(&env, &token, &contract_id, 700);
 
-    client.resolve_dispute(&arbiter_addr, &0u32, &false);
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter_addr, &0u32, &false),
+        Err(Ok(Error::InsufficientBalance))
+    );
 
     let token_client = token::Client::new(&env, &token);
-    assert_eq!(token_client.balance(&client_addr), 400);
     assert_eq!(token_client.balance(&freelancer_addr), 0);
-    assert_eq!(token_client.balance(&contract_id), 0);
-
-    let milestone = milestone_0(&client);
-    assert_eq!(milestone.status, MilestoneStatus::Refunded);
-    assert_eq!(milestone.released_amount, 0);
+    assert_eq!(token_client.balance(&client_addr), 0);
+    assert_eq!(token_client.balance(&contract_id), 300);
+    assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
 
 // ── apply_dispute_arbitration_split ─────────────────────────────────────────
@@ -241,54 +244,52 @@ fn split_rejects_zero_contract_balance() {
     drain(&env, &token, &contract_id, 1_000);
 
     let result = client.try_apply_dispute_arbitration_split(&arbiter_addr, &0u32, &5_000u32);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(result, Err(Ok(Error::InsufficientBalance)));
     assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
 
+/// A balance shortfall is rejected rather than split partially (#689):
+/// nothing moves and the milestone stays disputed.
 #[test]
-fn split_shortfall_pays_client_first_then_caps_freelancer() {
+fn split_shortfall_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client_addr, freelancer_addr, arbiter_addr, token, contract_id, client) =
         disputed_escrow(&env, 10_000);
-    // Owed: 7_000 to the client, 3_000 to the freelancer. Only 8_000 remains.
-    drain(&env, &token, &contract_id, 2_000);
+    drain(&env, &token, &contract_id, 2000);
 
-    let alloc = client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &7_000u32);
-    assert_eq!(alloc.client_refund, 7_000);
-    assert_eq!(alloc.freelancer_payout, 1_000);
+    assert_eq!(
+        client.try_apply_dispute_arbitration_split(&arbiter_addr, &0u32, &7_000u32),
+        Err(Ok(Error::InsufficientBalance))
+    );
 
     let token_client = token::Client::new(&env, &token);
-    assert_eq!(token_client.balance(&client_addr), 7_000);
-    assert_eq!(token_client.balance(&freelancer_addr), 1_000);
-    assert_eq!(token_client.balance(&contract_id), 0);
-
-    let milestone = milestone_0(&client);
-    assert_eq!(milestone.status, MilestoneStatus::Split);
-    assert_eq!(milestone.released_amount, 1_000);
+    assert_eq!(token_client.balance(&client_addr), 0);
+    assert_eq!(token_client.balance(&freelancer_addr), 0);
+    assert_eq!(token_client.balance(&contract_id), 8000);
+    assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
 
+/// A balance shortfall is rejected rather than split partially (#689):
+/// nothing moves and the milestone stays disputed.
 #[test]
-fn split_shortfall_below_client_share_leaves_freelancer_unpaid() {
+fn split_shortfall_below_client_share_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client_addr, freelancer_addr, arbiter_addr, token, contract_id, client) =
         disputed_escrow(&env, 10_000);
-    // Owed: 7_000 to the client, 3_000 to the freelancer. Only 5_000 remains.
-    drain(&env, &token, &contract_id, 5_000);
+    drain(&env, &token, &contract_id, 4000);
 
-    let alloc = client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &7_000u32);
-    assert_eq!(alloc.client_refund, 5_000);
-    assert_eq!(alloc.freelancer_payout, 0);
+    assert_eq!(
+        client.try_apply_dispute_arbitration_split(&arbiter_addr, &0u32, &7_000u32),
+        Err(Ok(Error::InsufficientBalance))
+    );
 
     let token_client = token::Client::new(&env, &token);
-    assert_eq!(token_client.balance(&client_addr), 5_000);
+    assert_eq!(token_client.balance(&client_addr), 0);
     assert_eq!(token_client.balance(&freelancer_addr), 0);
-    assert_eq!(token_client.balance(&contract_id), 0);
-
-    let milestone = milestone_0(&client);
-    assert_eq!(milestone.status, MilestoneStatus::Refunded);
-    assert_eq!(milestone.released_amount, 0);
+    assert_eq!(token_client.balance(&contract_id), 6000);
+    assert_eq!(milestone_0(&client).status, MilestoneStatus::Disputed);
 }
