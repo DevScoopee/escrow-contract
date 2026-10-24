@@ -55,8 +55,57 @@ jobs:
       - name: Run tests
         run: cargo test --manifest-path contracts/milestone-escrow/Cargo.toml
 
-      - name: Build WASM
-        run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
+      - name: Build and optimize WASM
+        # `--optimize` runs wasm-opt on the release build; that is the wasm
+        # which gets deployed, so it is the one measured below.
+        run: stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml --optimize --out-dir dist/optimized
+
+      - name: WASM size budget
+        # Fails when the optimized wasm outgrows WASM_BUDGET_BYTES, so size
+        # creep is caught in the PR that causes it. The budget is a measured
+        # size plus 5%. Raise it deliberately, in a PR that explains the growth.
+        # 191,229 bytes when this landed with #852: since the original 170,237
+        # measurement, main gained the arbiter fee, dispute evidence, milestone
+        # amendment, freelancer rotation, event topics, the constructor
+        # settings, tax recipients and contract-assigned admin proposals.
+        env:
+          WASM_BUDGET_BYTES: "200790"
+        run: |
+          wasm=dist/optimized/milestone_escrow.wasm
+          size=$(stat -c %s "$wasm")
+          sha=$(sha256sum "$wasm" | cut -d' ' -f1)
+          echo "milestone_escrow.wasm: $size bytes (budget $WASM_BUDGET_BYTES), sha256 $sha"
+          {
+            echo "### Optimized milestone_escrow.wasm"
+            echo ""
+            echo "| size (bytes) | budget (bytes) | sha256 |"
+            echo "|---|---|---|"
+            echo "| $size | $WASM_BUDGET_BYTES | \`$sha\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt "$WASM_BUDGET_BYTES" ]; then
+            echo "::error::milestone_escrow.wasm is $size bytes, over the $WASM_BUDGET_BYTES-byte budget"
+            exit 1
+          fi
+
+      - name: Upload optimized wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestone_escrow-optimized-${{ github.sha }}
+          path: dist/optimized/milestone_escrow.wasm
+
+  dependencies:
+    # RUSTSEC advisories (vulnerable, unsound, unmaintained), yanked crates,
+    # disallowed licenses and unknown sources in Cargo.lock fail CI. Policy
+    # and accepted exceptions live in deny.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
 
       # The factory's tests deploy the escrow wasm built just above.
       - name: Format check (factory)

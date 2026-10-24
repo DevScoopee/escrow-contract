@@ -299,6 +299,12 @@ versioned GitHub Package `@goldii-locks/milestone-escrow-bindings` on `v*`
 tags, so clients stop hand-encoding ScVals. See
 [docs/typescript-bindings.md](docs/typescript-bindings.md).
 
+The `test` job also builds the optimized wasm, prints its size and SHA-256,
+uploads it as an artifact, and fails when it is larger than
+`WASM_BUDGET_BYTES` (set in `.github/workflows/ci.yml` to a measured size plus
+5%). If a change legitimately needs more room, raise the
+budget in the same PR and say why.
+
 ## Test
 
 From the repository root:
