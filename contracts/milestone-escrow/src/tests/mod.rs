@@ -32,6 +32,7 @@ mod cancel_approval_ttl_tests;
 mod cancel_escrow_split_refund_guards_tests;
 mod cancel_escrow_test;
 mod cold_config_storage_tests;
+mod conservation_proptests;
 mod constructor_tests;
 mod cost_tests;
 mod dispute_evidence_tests;

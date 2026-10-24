@@ -1,10 +1,13 @@
 # Changelog
 
-Every released or deployed build lists the commit it was built from and the
-SHA-256 of `milestone_escrow.wasm` produced by `scripts/build-reproducible.sh`
-for that commit. See "Verifying the deployed contract" in the README.
+All notable changes to the Milestone Escrow Contract will be documented in this file.
 
-## Unreleased
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and every released or deployed build lists the contract address, source commit (if known),
+and the SHA-256 hash of `milestone_escrow.wasm` produced by `scripts/build-reproducible.sh`.
+See "Verifying the deployed contract" in the README.
+
+## [Unreleased]
 
 WASM: build with `scripts/build-reproducible.sh <commit>`; CI publishes the
 hash for every commit in the `reproducible-wasm` job summary.
@@ -29,6 +32,8 @@ hash for every commit in the `reproducible-wasm` job summary.
 
 ### Added
 
+- Property-based tests (`proptest`) for conservation of funds, terminal state immutability,
+  and failed-call balance isolation across arbitrary operation sequences (#722).
 - `migrate_cold_config(admin)`: run once after upgrading an existing deployment
   to move the configuration above out of instance storage. Reads fall back to
   the old location until then (#772).
@@ -49,7 +54,49 @@ hash for every commit in the `reproducible-wasm` job summary.
   `@goldii-locks/milestone-escrow-bindings` on `v*` tags; consumption guide in
   `docs/typescript-bindings.md` (#744).
 
-## Testnet deployment `CDD5WKK3…4MUH`
+## [0.2.0] - 2026-06-20
 
-WASM sha256 `67d0eb543aaa9ca99c1b23ba18a3f4713c899eba574bbef96540f2540b8b2f0e`,
-source commit unknown (deployed before reproducible builds).
+### Deployed Contract (Testnet)
+
+- Contract ID: `CDD5WKK3WT3QVKXMXTJNDIXE4T73FK6GGXDSD6UTJAH6YYZU52SQ4MUH`
+- WASM SHA-256: `67d0eb543aaa9ca99c1b23ba18a3f4713c899eba574bbef96540f2540b8b2f0e`
+- Explorer: [StellarExpert Testnet](https://stellar.expert/explorer/testnet/contract/CDD5WKK3WT3QVKXMXTJNDIXE4T73FK6GGXDSD6UTJAH6YYZU52SQ4MUH)
+
+### Added
+
+- **Partial/Installment Releases**: Added `approve_partial` endpoint and `released_amount` field on `Milestone` struct, enabling gradual milestone payouts.
+- **Time-Locked Auto-Release**: Added `claim_auto_release` and `time_until_auto_release` endpoints; added `delivered_at` on `Milestone` and `auto_release_seconds` on `Job`.
+- **Token Whitelist Management**: Added `add_whitelisted_token`, `remove_whitelisted_token`, and `get_whitelisted_tokens` admin functions with strict capacity limits.
+- **Acceptance Gate**: Added `accept_job` (freelancer) and `accept_arbiter` (arbiter) requirements before delivery or disputes can proceed, along with `withdraw_unaccepted` for client fund recovery.
+- **Arbitration Splits**: Added `apply_dispute_arbitration_split` and `MilestoneStatus::Split` status for proportional dispute payouts.
+- **Tax Withholding**: Added `tax_withholding_deductions` and admin deduction endpoints with strict basis-point validation.
+- **Platform Fee Allocation**: Added configurable fee sharing across client, freelancer, and treasury via `set_platform_fee_allocation`.
+- **Yield Integration**: Added `set_escrow_interest_yield`, `set_interest_yield_consent`, and `admin_accrue_yield`.
+- **Emergency and Cancellation Controls**: Added multi-party `cancel_escrow`, `emergency_pause`, `emergency_unpause_parties`, and admin override resolution endpoints.
+- **Surplus Sweep**: Added `sweep_excess` for recovering excess non-obligation tokens.
+
+### Changed
+
+- Migrated contract to Soroban SDK `28.0.0-rc.1`.
+- Upgraded `initialize` signature to include `auto_release_seconds` and spec hash commitments.
+
+## [0.1.0] - 2026-06-13
+
+### Deployed Contract (Testnet)
+
+- Contract ID: `CBBRYWY6ROXCM6AHP4COM3AL6UDPTY66FXF43Q7PNEIPU53RZOGHBYP3`
+- Explorer: [StellarExpert Testnet](https://stellar.expert/explorer/testnet/contract/CBBRYWY6ROXCM6AHP4COM3AL6UDPTY66FXF43Q7PNEIPU53RZOGHBYP3)
+
+### Added
+
+- Initial release of the milestone escrow smart contract on Stellar Testnet.
+- Four distinct operational roles: Admin, Client, Freelancer, and Arbiter.
+- Core escrow lifecycle endpoints:
+  - `initialize`: set up job milestones with upfront funding.
+  - `fund`: deposit full milestone balance into escrow.
+  - `mark_delivered`: signal milestone completion by freelancer.
+  - `approve_milestone`: release milestone funds to freelancer.
+  - `request_revision`: request revisions on delivered milestones (capped at 3).
+  - `raise_dispute`: freeze milestone and request arbiter intervention.
+  - `resolve_dispute`: arbiter release or refund resolution.
+  - `get_job`: view current job state.
