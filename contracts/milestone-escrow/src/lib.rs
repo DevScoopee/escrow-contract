@@ -472,6 +472,21 @@ pub struct SplitRefundFeeDistribution {
     pub treasury_fee_share: i128,
 }
 
+/// Narrower administrative roles (issue #761). Each defaults to the root
+/// admin until `set_admin_role` assigns it to another address.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdminRole {
+    /// `upgrade`, `migrate`, `migrate_cold_config`.
+    Upgrader,
+    /// Pause and resume, including the emergency pause controls.
+    Operator,
+    /// Fees, yield, tax settings and the token whitelist.
+    FeeManager,
+    /// Overrides of stuck payouts, and multisig lock / setup.
+    Resolver,
+}
+
 #[contracttype]
 pub enum DataKey {
     Job,
@@ -727,6 +742,9 @@ pub enum DataKey {
     /// Persistent: the signer-set change awaiting approval
     /// (`propose_multisig_config`).
     PendingMultiSigConfig,
+    /// Instance: the address holding an `AdminRole`. Missing means the root
+    /// admin holds it.
+    AdminRole(AdminRole),
 }
 
 #[contracttype]
@@ -1884,6 +1902,16 @@ pub struct SplitRefundNetDistributionEvent {
 }
 
 /// Emitted by `upgrade` recording the outcome of a contract WASM upgrade.
+/// Emitted by `set_admin_role`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminRoleChangedEvent {
+    pub admin: Address,
+    pub role: AdminRole,
+    pub previous: Address,
+    pub new_address: Address,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUpgradedEvent {
@@ -1956,6 +1984,51 @@ impl MilestoneEscrow {
             .ok_or(Error::NotInitialized)?;
         if stored_admin != *admin {
             return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Require `caller` to hold `role` (issue #761): the address assigned
+    /// with `set_admin_role`, or the root admin while the role is unassigned.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – No admin is stored.
+    /// * `Unauthorized`   – `caller` does not hold `role`.
+    fn require_role(env: &Env, caller: &Address, role: AdminRole) -> Result<(), Error> {
+        caller.require_auth();
+        let instance = env.storage().instance();
+        let holder: Address = match instance.get(&DataKey::AdminRole(role)) {
+            Some(holder) => holder,
+            None => instance.get(&DataKey::Admin).ok_or(Error::NotInitialized)?,
+        };
+        if holder != *caller {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Reject while milestone `index`'s dispute is younger than the dispute
+    /// timeout, so a resolver cannot pre-empt the arbiter (issue #761).
+    fn assert_dispute_timeout_elapsed(env: &Env, index: u32) -> Result<(), Error> {
+        let Some(info) = env
+            .storage()
+            .persistent()
+            .get::<_, DisputeInfo>(&DataKey::DisputeInfo(index))
+        else {
+            return Ok(());
+        };
+        let timeout = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeTimeout)
+            .unwrap_or(DISPUTE_TIMEOUT_SECONDS);
+        let elapsed = env
+            .ledger()
+            .timestamp()
+            .checked_sub(info.disputed_at)
+            .ok_or(Error::DisputeTimeoutNotReached)?;
+        if elapsed < timeout {
+            return Err(Error::DisputeTimeoutNotReached);
         }
         Ok(())
     }
@@ -3809,7 +3882,7 @@ impl MilestoneEscrow {
     ///   length-counter overflow.
     pub fn add_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let zero_account = Address::from_str(
             &env,
@@ -3824,16 +3897,6 @@ impl MilestoneEscrow {
         }
         if token == env.current_contract_address() {
             return Err(Error::InvalidAddress);
-        }
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)?;
-
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
         }
 
         let meta = Self::load_job_meta(&env)?;
@@ -3882,7 +3945,7 @@ impl MilestoneEscrow {
     /// * `WhitelistMinimum`    - Removing the token would leave the whitelist empty (the contract requires at least one token to remain).
     pub fn remove_whitelisted_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let meta = Self::load_job_meta(&env)?;
         if meta.funded {
@@ -6592,7 +6655,7 @@ impl MilestoneEscrow {
         admin: &Address,
         to_freelancer: bool,
     ) -> Result<(JobMeta, i128), Error> {
-        Self::require_admin(env, admin)?;
+        Self::require_role(env, admin, AdminRole::Resolver)?;
 
         // Only valid when a cancel lock is active.
         let cancel_locked = env
@@ -6622,6 +6685,9 @@ impl MilestoneEscrow {
             }
             if Self::is_terminal_status(&milestone.status) {
                 continue;
+            }
+            if milestone.status == MilestoneStatus::Disputed {
+                Self::assert_dispute_timeout_elapsed(env, index)?;
             }
             // Guard: a malformed entry with a negative amount or
             // released_amount (e.g. i128::MIN) could yield a nonsensical
@@ -6680,7 +6746,7 @@ impl MilestoneEscrow {
     /// * `Paused`         – The contract is currently emergency-paused.
     /// * `EscrowLocked`   – A cancel is in progress and holds the cancel lock.
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Upgrader)?;
         Self::ensure_not_paused(&env)?;
 
         env.deployer()
@@ -6728,7 +6794,7 @@ impl MilestoneEscrow {
     /// * `NotInitialized` – Admin key has never been stored.
     /// * `Unauthorized`   – `admin` is not the stored admin.
     pub fn migrate_cold_config(env: Env, admin: Address) -> Result<u32, Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Upgrader)?;
         Ok(Self::move_cold_config(&env))
     }
 
@@ -6760,7 +6826,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`    – `admin` is not the stored admin.
     /// * `AlreadyMigrated` – Storage is already at `SCHEMA_VERSION`.
     pub fn migrate(env: Env, admin: Address) -> Result<u32, Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Upgrader)?;
         let from_version = Self::read_schema_version(&env);
         if from_version >= SCHEMA_VERSION {
             return Err(Error::AlreadyMigrated);
@@ -6925,14 +6991,7 @@ impl MilestoneEscrow {
     /// * `NotPaused`                 – The contract is not currently paused.
     /// * `EmergencyPauseInProgress`  – A pause transition is already running.
     pub fn emergency_unpause(env: Env, admin: Address) -> Result<(), Error> {
-        // Auth + init guards first — a single require_auth so the host does not
-        // abort on a duplicated auth requirement.
-        admin.require_auth();
-        Self::require_initialized(&env)?;
-        let stored_admin = Self::load_admin(&env)?;
-        if stored_admin != admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, AdminRole::Operator)?;
 
         // Reject the illegal source state before any further ledger access
         // (including the transition lock) so a mistaken unpause never mutates
@@ -7009,7 +7068,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized` - Caller is not the verified admin.
     /// * `AlreadyPaused` - The contract is already paused.
     pub fn emergency_pause_admin_override(env: Env, admin: Address) -> Result<(), Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Operator)?;
 
         // Read the current state once; reject no-op transitions so the caller
         // can distinguish a successful override from a mistaken duplicate call.
@@ -7153,7 +7212,7 @@ impl MilestoneEscrow {
         Self::ensure_migrated(&env)?;
         // Both the Admin read and all subsequent instance reads/writes touch
         // instance storage only, so the whole function uses a single ledger entry.
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
         Self::assert_emergency_pause_not_locked(&env)?;
         // Precondition: validate illegal source state (locked allocation) before any ledger write
@@ -7236,7 +7295,7 @@ impl MilestoneEscrow {
         // Perform all authorization and precondition checks before any ledger writes
         // so unauthorized callers and illegal source states are rejected without
         // mutating any storage entry.
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
         Self::assert_platform_fee_allocation_not_locked(&env)?;
         Self::assert_emergency_pause_not_locked(&env)?;
 
@@ -7298,7 +7357,7 @@ impl MilestoneEscrow {
         treasury_bps: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let current: PlatformFeeAllocation = Self::load_platform_fee_allocation(&env)?;
 
@@ -8072,7 +8131,7 @@ impl MilestoneEscrow {
         threshold: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         // Either layout means the regime already exists: a contract upgraded
         // from before issue #456 still holds its signer set under the legacy
@@ -8348,6 +8407,60 @@ impl MilestoneEscrow {
     // the admin. This prevents the signer approvals already being collected
     // for one `new_admin` from being silently redirected mid-flight by a
     // second, overlapping proposal.
+
+    /// Assign one of the narrower administrative roles (issue #761) to
+    /// `new_address`. Root admin only. Passing the root admin's own address
+    /// returns the role to the default (held by the root admin).
+    /// Emits `rolechg`.
+    ///
+    /// # Errors
+    /// * `MigrationRequired` – Storage predates this code; call `migrate`.
+    /// * `NotInitialized`    – No admin is stored.
+    /// * `Unauthorized`      – `admin` is not the root admin.
+    /// * `InvalidAddress`    – `new_address` is a zero address or this
+    ///   contract.
+    pub fn set_admin_role(
+        env: Env,
+        admin: Address,
+        role: AdminRole,
+        new_address: Address,
+    ) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        Self::require_admin_from_instance(&env, &admin)?;
+        Self::validate_address(&env, &new_address)?;
+
+        let instance = env.storage().instance();
+        let key = DataKey::AdminRole(role);
+        let previous: Address = instance.get(&key).unwrap_or(admin.clone());
+        if new_address == admin {
+            instance.remove(&key);
+        } else {
+            instance.set(&key, &new_address);
+        }
+
+        env.events().publish(
+            (symbol_short!("rolechg"),),
+            AdminRoleChangedEvent {
+                admin,
+                role,
+                previous,
+                new_address,
+            },
+        );
+        Ok(())
+    }
+
+    /// The address currently holding `role`: its assignee, or the root admin.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – No admin is stored.
+    pub fn get_admin_role(env: Env, role: AdminRole) -> Result<Address, Error> {
+        let instance = env.storage().instance();
+        match instance.get(&DataKey::AdminRole(role)) {
+            Some(holder) => Ok(holder),
+            None => instance.get(&DataKey::Admin).ok_or(Error::NotInitialized),
+        }
+    }
 
     /// Propose a new admin via the multisig approval workflow.
     ///
@@ -9158,7 +9271,7 @@ impl MilestoneEscrow {
         // validly-signed non-admin. Both guards run before any calculation or
         // event publish, so an unauthorized caller learns nothing about the
         // configuration.
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         // Precondition: the escrow must be initialized so the estimator is
         // anchored to a real job rather than a fresh or uninitialized instance.
@@ -9259,7 +9372,7 @@ impl MilestoneEscrow {
         // Authorization: `admin.require_auth()` inside the helper makes the
         // host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         // Illegal source state: after funding the split is the parties'
         // economics, so the admin alone may no longer change it (issue #776).
@@ -9330,7 +9443,7 @@ impl MilestoneEscrow {
         freelancer_share_bps: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
         let meta = Self::load_job_meta(&env)?;
 
         // Both parties must independently sign this transaction. A missing
@@ -9431,7 +9544,7 @@ impl MilestoneEscrow {
         // Guard 1 — authorization. `admin.require_auth()` inside the helper makes
         // the host reject a missing signature before this body runs at all; the
         // equality check then rejects a validly-signed non-admin.
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         // Guard 2 — illegal source state. One read covers both cases: a missing
         // entry is `NotInitialized`, and an entry that is already locked is the
@@ -9474,7 +9587,7 @@ impl MilestoneEscrow {
     /// * `InvalidStatus` - Interest/yield lock is not active (already unlocked).
     pub fn unlock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
         Self::require_client_and_freelancer_consent(&env)?;
         let mut state = Self::load_interest_yield_state(&env)?;
         if !state.locked {
@@ -9766,7 +9879,7 @@ impl MilestoneEscrow {
         // preconditions so that an unauthorized caller on an uninitialised or
         // paused contract receives the precondition error, not Unauthorized,
         // which would leak information about the admin key.
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
         Self::validate_yield_rate_bps(rate_bps)?;
 
         let old_rate_bps: u32 = env
@@ -9838,7 +9951,7 @@ impl MilestoneEscrow {
         Self::ensure_migrated(&env)?;
         // Authorize from instance storage so the admin read shares a ledger
         // entry with the `DataKey::Job` read below (see the rustdoc note).
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let meta = Self::load_job_meta(&env)?;
         if milestone_index >= meta.milestone_count {
@@ -9911,7 +10024,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let meta = Self::load_job_meta(&env)?;
         Self::require_escrow_has_funding(&env, &meta)?;
@@ -10010,7 +10123,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
         Self::assert_not_paused(&env)?;
@@ -10114,7 +10227,7 @@ impl MilestoneEscrow {
         total_seconds: i128,
     ) -> Result<RatioSplit, Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let meta = Self::load_job_meta(&env)?;
         Self::require_escrow_has_funding(&env, &meta)?;
@@ -10223,7 +10336,7 @@ impl MilestoneEscrow {
         // other caller is rejected with `Unauthorized`, and a contract that
         // has never been initialised with `NotInitialized`, before any ledger
         // entry is read or written.
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Operator)?;
 
         // Precondition: reject an illegal source state — an emergency
         // pause/resume transition already in flight — before any write.
@@ -10281,7 +10394,7 @@ impl MilestoneEscrow {
         // the admin read and every `Paused` / `EpLk` read and write below land
         // on the single instance ledger entry, reducing the call from two
         // distinct ledger entries touched to one.
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Operator)?;
 
         let currently_paused: bool = env
             .storage()
@@ -10328,7 +10441,7 @@ impl MilestoneEscrow {
     /// * `Unauthorized`    – Caller is not the stored admin.
     /// * `InvalidAddress`  – `recipient` is a zero address.
     pub fn set_tax_recipient(env: Env, admin: Address, recipient: Address) -> Result<(), Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let zero_account = Address::from_str(
             &env,
@@ -10793,7 +10906,7 @@ impl MilestoneEscrow {
         Self::ensure_migrated(&env)?;
         Self::require_initialized(&env)?;
 
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let meta = Self::load_job_meta(&env)?;
         Self::require_escrow_has_funding(&env, &meta)?;
@@ -10884,7 +10997,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let record: TaxWithholdingRecord = env
             .storage()
@@ -10985,7 +11098,7 @@ impl MilestoneEscrow {
         freelancer_payout_bps: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let record: TaxWithholdingRecord = env
             .storage()
@@ -11167,7 +11280,7 @@ impl MilestoneEscrow {
         // caller that is not the stored admin is rejected with `Unauthorized`,
         // and a contract that has never been initialised is rejected with
         // `NotInitialized`, before any ledger entry is read or written.
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::FeeManager)?;
 
         let meta = Self::load_job_meta(&env)?;
         Self::require_escrow_has_funding(&env, &meta)?;
@@ -11266,14 +11379,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        // Auth + init guards first — a single require_auth so the host does not
-        // abort on a duplicated auth requirement.
-        admin.require_auth();
-        Self::require_initialized(&env)?;
-        let stored_admin = Self::load_admin(&env)?;
-        if stored_admin != admin {
-            return Err(Error::Unauthorized);
-        }
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         // Only valid when a multisig lock is active — reject before any
         // JobMeta / milestone ledger reads.
@@ -11397,7 +11503,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
     ) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         // Reject illegal source state before any job/milestone ledger I/O.
         let multisig_locked = env
@@ -11503,7 +11609,7 @@ impl MilestoneEscrow {
         client_refund_bps: u32,
         freelancer_payout_bps: u32,
     ) -> Result<RefundAllocation, Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let multisig_locked = env
             .storage()
@@ -11856,7 +11962,7 @@ impl MilestoneEscrow {
         client_refund_bps: u32,
         freelancer_payout_bps: u32,
     ) -> Result<RefundAllocation, Error> {
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
 
         let cancel_locked = env
             .storage()
@@ -11949,7 +12055,7 @@ impl MilestoneEscrow {
         freelancer_payout_bps: u32,
     ) -> Result<RefundAllocation, Error> {
         // ── preconditions (#532): auth and contract state before anything else
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
         Self::assert_emergency_pause_not_locked(&env)?;
 
         // `require_admin` already proved an admin key is stored, so the
@@ -12245,7 +12351,7 @@ impl MilestoneEscrow {
     pub fn multisig_lock(env: Env, admin: Address) -> Result<(), Error> {
         Self::ensure_migrated(&env)?;
         // Authorization check at top - require auth and admin role first
-        Self::require_admin_from_instance(&env, &admin)?;
+        Self::require_role(&env, &admin, AdminRole::Resolver)?;
         // Precondition guards before any ledger write: validate illegal source state
         // If already locked, return InvalidStatus with no storage mutation
         if env

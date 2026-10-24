@@ -216,18 +216,14 @@ fn test_admin_resume_escrow_touched_entries_footprint() {
     );
     assert!(resume.instructions > 0, "sanity: the call was metered");
 
-    // Control: the metric distinguishes 1 from 2.  `admin_pause_escrow`
-    // still reads the persistent `Admin` copy (its own storage layout is
-    // outside #449's scope), so its footprint is exactly one distinct
-    // entry larger than the consolidated resume call.
+    // Control: since the admin roles (#761), `admin_pause_escrow` also
+    // authorizes from the instance entry (`require_role`), so the two calls
+    // touch the same number of distinct entries.
     assert_eq!(
-        pause.memory_read_entries,
-        resume.memory_read_entries + 1,
-        "control: admin_pause_escrow additionally reads the persistent \
-         Admin copy — one distinct ledger entry more than admin_resume_escrow; \
-         measured pause {:?}, resume {:?}",
-        pause,
-        resume
+        pause.memory_read_entries, resume.memory_read_entries,
+        "control: admin_pause_escrow and admin_resume_escrow both read only \
+         the instance entry; measured pause {:?}, resume {:?}",
+        pause, resume
     );
 }
 

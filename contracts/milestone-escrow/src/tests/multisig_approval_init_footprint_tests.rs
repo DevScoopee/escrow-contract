@@ -435,8 +435,9 @@ fn test_multisig_approval_init_touched_entries_footprint() {
         "multisig_approval_init must not read or write persistent storage"
     );
 
-    // Control: `admin_pause_escrow` still reads the persistent `Admin` copy, so
-    // its footprint is exactly one distinct ledger entry larger.
+    // Control: `admin_pause_escrow` reads only the instance entry
+    // (`require_role`, #761), one distinct ledger entry fewer than
+    // multisig_approval_init, which also reads the persistent MultiSigConfig.
     let env_b = env_without_snapshot();
     env_b.mock_all_auths();
     let admin_b = Address::generate(&env_b);
@@ -449,15 +450,13 @@ fn test_multisig_approval_init_touched_entries_footprint() {
     escrow_b.admin_pause_escrow(&admin_b);
     let pause = env_b.cost_estimate().resources();
 
-    // Since issue #772 multisig_approval_init touches the persistent
-    // MultiSigConfig in place of the persistent Admin, so the two calls now
-    // touch the same number of distinct entries.
     assert_eq!(
-        pause.memory_read_entries, init.memory_read_entries,
-        "control: admin_pause_escrow reads the persistent Admin copy where \
-         multisig_approval_init reads the persistent MultiSigConfig; \
-         measured pause {:?}, init {:?}",
-        pause, init
+        pause.memory_read_entries + 1,
+        init.memory_read_entries,
+        "control: multisig_approval_init additionally reads the persistent \
+         MultiSigConfig; measured pause {:?}, init {:?}",
+        pause,
+        init
     );
 }
 

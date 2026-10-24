@@ -76,8 +76,13 @@ jobs:
         # measurement, main gained the arbiter fee, dispute evidence, milestone
         # amendment, freelancer rotation, event topics, the constructor
         # settings, tax recipients and contract-assigned admin proposals.
+        # 203,184 bytes with #858: migrate (#853), replace_arbiter (#856) and
+        # the narrower admin roles (#858).
+        # Note: testnet and mainnet cap contract code at 131,072 bytes
+        # (contract_max_size_bytes), which this wasm already exceeds; this
+        # budget only stops further growth.
         env:
-          WASM_BUDGET_BYTES: "200790"
+          WASM_BUDGET_BYTES: "213343"
         run: |
           wasm=dist/optimized/milestone_escrow.wasm
           size=$(stat -c %s "$wasm")

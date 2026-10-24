@@ -7,6 +7,9 @@ signer(s).  The rows have matching tests in
 `migrate`, milestone amendment, `set_tax_recipient`), whose auth is tested in
 their own test modules.
 
+Functions that name a role (issue #761) need the address `set_admin_role`
+assigned to that role, or the root admin while the role is unassigned.
+
 Read-only / pure-calculation functions (no storage writes, no token transfers)
 are listed at the bottom as **No auth required**.
 
@@ -17,11 +20,12 @@ are listed at the bottom as **No auth required**.
 | `initialize_with_arbiter_fee` | `admin` | `admin.require_auth()` |
 | `initialize_with_dispute_timeout` | `admin` | `admin.require_auth()` |
 | `initialize_with_funding_mode` | `admin` | `admin.require_auth()` |
+| `set_admin_role` | root `admin` | `require_admin_from_instance` |
 | `transfer_admin` | `current_admin` | `current_admin.require_auth()` |
-| `add_whitelisted_token` | `admin` | `require_admin` |
-| `remove_whitelisted_token` | `admin` | `require_admin` |
-| `upgrade` | `admin` | `require_admin` |
-| `migrate_cold_config` | `admin` | `require_admin` |
+| `add_whitelisted_token` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `remove_whitelisted_token` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `upgrade` | `Upgrader` role (root `admin` by default) | `require_role(AdminRole::Upgrader)` |
+| `migrate_cold_config` | `Upgrader` role (root `admin` by default) | `require_role(AdminRole::Upgrader)` |
 | `fund` | `client` | `client.require_auth()` |
 | `fund_milestone` | `client` | `client.require_auth()` |
 | `accept_job` | `freelancer` | `freelancer.require_auth()` |
@@ -40,51 +44,51 @@ are listed at the bottom as **No auth required**.
 | `apply_dispute_arbitration_split` | `arbiter` | `arbiter.require_auth()` |
 | `cancel_escrow` | `caller` (client **or** freelancer) | `caller.require_auth()` |
 | `revoke_cancel_approval` | `caller` (client **or** freelancer) | `caller.require_auth()` |
-| `admin_override_cancel_release` | `admin` | `require_admin` |
-| `admin_override_cancel_refund` | `admin` | `require_admin` |
-| `cancel_escrow_claim_refund` | `admin` | `require_admin_from_instance` |
+| `admin_override_cancel_release` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_override_cancel_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `cancel_escrow_claim_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
 | `emergency_pause` | `client` **and** `freelancer` (both) | `client.require_auth()` + `freelancer.require_auth()` |
-| `emergency_unpause` | `admin` | `admin.require_auth()` (inline) |
+| `emergency_unpause` | `Operator` role (root `admin` by default) | `require_role(AdminRole::Operator)` |
 | `emergency_unpause_parties` | `client` **and** `freelancer` (both) | `client.require_auth()` + `freelancer.require_auth()` |
-| `emergency_pause_admin_override` | `admin` | `require_admin` |
+| `emergency_pause_admin_override` | `Operator` role (root `admin` by default) | `require_role(AdminRole::Operator)` |
 | `emergency_pause_split_refund` | `caller` (client **or** freelancer **or** admin) | `caller.require_auth()` |
-| `emergency_pause_claim_refund` | `admin` | `require_admin_from_instance` |
+| `emergency_pause_claim_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
 | `emergency_pause_allocation` | `caller` (client **or** freelancer **or** admin) | `caller.require_auth()` |
-| `set_platform_fee_allocation` | `admin` | `require_admin_from_instance` |
-| `lock_platform_fee_allocation` | `admin` | `require_admin` |
-| `pf_alloc_admin_override` | `admin` | `require_admin` |
+| `set_platform_fee_allocation` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `lock_platform_fee_allocation` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `pf_alloc_admin_override` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
 | `payment_streaming_milestones` | `client` **and** `freelancer` (both) | `require_client_and_freelancer_consent` |
 | `payment_streaming_consent` | `client` **and** `freelancer` (both) | `require_client_and_freelancer_consent` |
 | `milestone_time_extensions` | `client` **and** `freelancer` (both) | `require_client_and_freelancer_consent` |
 | `time_extensions_consent` | `client` **and** `freelancer` (both) | `require_client_and_freelancer_consent` |
-| `multisig_approval_init` | `admin` | `require_admin_from_instance` |
+| `multisig_approval_init` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
 | `multisig_approve` | `signer` (must be registered multisig signer) | `signer.require_auth()` |
-| `multisig_admin_override_release` | `admin` | `admin.require_auth()` (inline) |
-| `multisig_admin_override_refund` | `admin` | `require_admin` |
-| `multisig_split_refund` | `admin` | `require_admin` |
-| `multisig_lock` | `admin` | `require_admin_from_instance` |
+| `multisig_admin_override_release` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `multisig_admin_override_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `multisig_split_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `multisig_lock` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
 | `propose_admin_transfer` | `admin` | `admin.require_auth()` (inline) |
 | `cancel_admin_transfer_proposal` | `admin` | `require_admin` |
 | `sweep_excess` | `caller` (client **or** admin) | `caller.require_auth()` |
-| `escrow_interest_yield` | `admin` | `require_admin` |
-| `set_escrow_interest_yield` | `admin` | `require_admin_from_instance` |
-| `set_interest_yield_consent` | `admin` **and** `client` **and** `freelancer` (all three) | `require_admin` + `meta.client.require_auth()` + `meta.freelancer.require_auth()` |
-| `lock_escrow_interest_yield` | `admin` | `require_admin_from_instance` |
-| `unlock_escrow_interest_yield` | `admin` **and** `client` **and** `freelancer` (all three) | `require_admin` + `require_client_and_freelancer_consent` |
-| `admin_set_yield_rate` | `admin` | `require_admin` |
-| `admin_accrue_yield` | `admin` | `require_admin_from_instance` |
-| `admin_override_release` | `admin` | `require_admin` |
-| `admin_override_refund` | `admin` | `require_admin` |
-| `admin_override_streaming_release` | `admin` | `require_admin` |
-| `admin_pause_escrow` | `admin` | `require_admin` |
-| `admin_resume_escrow` | `admin` | `require_admin_from_instance` |
+| `escrow_interest_yield` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `set_escrow_interest_yield` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `set_interest_yield_consent` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `lock_escrow_interest_yield` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `unlock_escrow_interest_yield` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `admin_set_yield_rate` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `admin_accrue_yield` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `admin_override_release` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_override_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_override_streaming_release` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_pause_escrow` | `Operator` role (root `admin` by default) | `require_role(AdminRole::Operator)` |
+| `admin_resume_escrow` | `Operator` role (root `admin` by default) | `require_role(AdminRole::Operator)` |
 | `tax_withholding_deductions` | `client` **and** `freelancer` (both) | `meta.client.require_auth()` + `meta.freelancer.require_auth()` |
-| `admin_override_tax_release` | `admin` | `require_admin` |
-| `admin_override_tax_refund` | `admin` | `require_admin` |
-| `admin_override_tax_split_refund` | `admin` | `require_admin` |
-| `admin_tax_withholding_deductions` | `admin` | `require_admin` |
-| `set_tax_recipient` | `admin` | `require_admin` |
-| `migrate` | `admin` | `require_admin` |
+| `admin_override_tax_release` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_override_tax_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_override_tax_split_refund` | `Resolver` role (root `admin` by default) | `require_role(AdminRole::Resolver)` |
+| `admin_tax_withholding_deductions` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `set_tax_recipient` | `FeeManager` role (root `admin` by default) | `require_role(AdminRole::FeeManager)` |
+| `migrate` | `Upgrader` role (root `admin` by default) | `require_role(AdminRole::Upgrader)` |
 | `propose_multisig_config` | `admin` | `require_admin` |
 | `cancel_multisig_config_proposal` | `admin` | `require_admin` |
 | `execute_multisig_config` | none: controlled by the current signers' approvals of the proposal | — |
@@ -134,3 +138,4 @@ are listed at the bottom as **No auth required**.
 | `get_pending_multisig_config` | Pure read |
 | `get_tax_recipient` | Pure read |
 | `schema_version` | Pure read |
+| `get_admin_role` | Pure read |
