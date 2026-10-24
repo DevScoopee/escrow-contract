@@ -7730,6 +7730,19 @@ impl MilestoneEscrow {
         // split arithmetic and no state is mutated.
         let _meta = Self::require_client_and_freelancer_consent(&env)?;
 
+        Self::time_extension_split(&env, amount, elapsed_seconds, total_seconds)
+    }
+
+    /// The split behind `milestone_time_extensions`, without its
+    /// authorization. `admin_override_streaming_release` calls this directly
+    /// after its own admin check: an override must not need the signatures of
+    /// the client and freelancer it overrides.
+    fn time_extension_split(
+        env: &Env,
+        amount: i128,
+        elapsed_seconds: i128,
+        total_seconds: i128,
+    ) -> Result<RatioSplit, Error> {
         // Reject illegal source states BEFORE the execution lock is acquired, so
         // an invalid amount or time range can never observe or mutate on-chain
         // state. These are validation-only errors and require no ledger write.
@@ -10123,12 +10136,7 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let split = Self::milestone_time_extensions(
-            env.clone(),
-            remaining,
-            elapsed_seconds,
-            total_seconds,
-        )?;
+        let split = Self::time_extension_split(&env, remaining, elapsed_seconds, total_seconds)?;
 
         let token_client = token::Client::new(&env, &meta.token);
         let contract_balance = Self::available_balance(&env, &token_client);
