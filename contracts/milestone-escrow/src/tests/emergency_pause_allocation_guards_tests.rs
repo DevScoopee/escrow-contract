@@ -61,7 +61,7 @@ fn funded(env: &Env) -> Fixture<'_> {
 /// A funded escrow frozen by the emergency pause — the only legal source state.
 fn paused(env: &Env) -> Fixture<'_> {
     let fx = funded(env);
-    fx.escrow.emergency_pause_admin_override(&fx.admin, &true);
+    fx.escrow.emergency_pause_admin_override(&fx.admin);
     fx
 }
 
@@ -222,7 +222,7 @@ fn test_allocation_rejects_running_escrow_with_not_paused() {
 fn test_allocation_rejects_after_unpause() {
     let env = Env::default();
     let fx = paused(&env);
-    fx.escrow.emergency_pause_admin_override(&fx.admin, &false);
+    fx.escrow.emergency_unpause(&fx.admin);
     assert_rejected(&env, &fx, &fx.freelancer, Error::NotPaused);
 }
 

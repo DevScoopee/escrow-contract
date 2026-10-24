@@ -294,7 +294,7 @@ fn emergency_pause_allocation_table() {
     let env = test_env();
     env.mock_all_auths();
     let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
 
     for total in total_cases() {
         for bps in BPS_CASES {

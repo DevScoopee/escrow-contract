@@ -45,37 +45,11 @@ fn override_false_to_true_sets_paused_flag() {
         "contract must start unpaused"
     );
 
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
 
     assert!(
         client.is_emergency_paused(),
         "flag must be set after override"
-    );
-    assert!(
-        !read_pause_lock(&env, &client),
-        "EmergencyPauseLock must remain false — override must not touch it"
-    );
-}
-
-#[test]
-fn override_true_to_false_clears_paused_flag() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
-    client.emergency_pause(&client_addr, &freelancer_addr);
-
-    assert!(
-        client.is_emergency_paused(),
-        "contract must be paused before override"
-    );
-
-    client.emergency_pause_admin_override(&admin_addr, &false);
-
-    assert!(
-        !client.is_emergency_paused(),
-        "flag must be cleared after override"
     );
     assert!(
         !read_pause_lock(&env, &client),
@@ -90,11 +64,11 @@ fn override_round_trip_is_correct() {
 
     let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     assert!(client.is_emergency_paused());
     assert!(!read_pause_lock(&env, &client));
 
-    client.emergency_pause_admin_override(&admin_addr, &false);
+    client.emergency_unpause(&admin_addr);
     assert!(!client.is_emergency_paused());
     assert!(!read_pause_lock(&env, &client));
 }
@@ -111,7 +85,7 @@ fn unauthorized_caller_returns_unauthorized_and_no_state_change() {
     // Neither the client address nor an arbitrary attacker may override.
     for caller in [client_addr, attacker] {
         let before = escrow.is_emergency_paused();
-        let result = escrow.try_emergency_pause_admin_override(&caller, &true);
+        let result = escrow.try_emergency_pause_admin_override(&caller);
         assert_eq!(result, Err(Ok(Error::Unauthorized)));
         assert_eq!(
             escrow.is_emergency_paused(),
@@ -125,32 +99,12 @@ fn unauthorized_caller_returns_unauthorized_and_no_state_change() {
     }
 
     // Confirm admin can still succeed — no lock was left dirty.
-    escrow.emergency_pause_admin_override(&admin_addr, &true);
+    escrow.emergency_pause_admin_override(&admin_addr);
     assert!(escrow.is_emergency_paused());
 }
 
 #[test]
-fn no_op_unpaused_to_false_returns_invalid_status() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
-
-    assert!(!client.is_emergency_paused());
-    let result = client.try_emergency_pause_admin_override(&admin_addr, &false);
-    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
-    assert!(
-        !client.is_emergency_paused(),
-        "state must not change on no-op rejection"
-    );
-    assert!(
-        !read_pause_lock(&env, &client),
-        "no-op rejection must not write EmergencyPauseLock"
-    );
-}
-
-#[test]
-fn no_op_paused_to_true_returns_invalid_status() {
+fn no_op_paused_returns_already_paused() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -159,8 +113,8 @@ fn no_op_paused_to_true_returns_invalid_status() {
     client.emergency_pause(&client_addr, &freelancer_addr);
 
     assert!(client.is_emergency_paused());
-    let result = client.try_emergency_pause_admin_override(&admin_addr, &true);
-    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    let result = client.try_emergency_pause_admin_override(&admin_addr);
+    assert_eq!(result, Err(Ok(Error::AlreadyPaused)));
     assert!(
         client.is_emergency_paused(),
         "state must not change on no-op rejection"
@@ -176,15 +130,19 @@ fn emergency_pause_lock_is_never_written_by_override() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, admin_addr, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     // Perform several back-to-back overrides; the lock must stay false.
-    for desired in [true, false, true, false] {
-        client.emergency_pause_admin_override(&admin_addr, &desired);
+    for _ in 0..4 {
+        client.emergency_pause(&client_addr, &freelancer_addr);
+        client.emergency_unpause(&admin_addr);
+        client.emergency_pause_admin_override(&admin_addr);
         assert!(
             !read_pause_lock(&env, &client),
-            "EmergencyPauseLock must be false after override to {desired}"
-        );
+            "EmergencyPauseLock must be false after override"
+        ); // The override always pauses (#726); unpause for the next round.
+        client.emergency_unpause(&admin_addr);
     }
 }
 
@@ -197,25 +155,9 @@ fn override_does_not_leave_lock_that_blocks_emergency_pause() {
 
     // Override to paused, then unpause via emergency_unpause — if the lock
     // leaked, emergency_unpause would return EmergencyPauseInProgress.
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     // emergency_unpause checks assert_emergency_pause_not_locked internally.
     client.emergency_unpause(&admin_addr); // must not panic or return error
-    assert!(!client.is_emergency_paused());
-}
-
-#[test]
-fn emergency_pause_does_not_block_subsequent_override() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
-        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
-
-    client.emergency_pause(&client_addr, &freelancer_addr);
-    assert!(client.is_emergency_paused());
-
-    // Override to unpaused — must succeed regardless of what emergency_pause did.
-    client.emergency_pause_admin_override(&admin_addr, &false);
     assert!(!client.is_emergency_paused());
 }
 
@@ -232,7 +174,7 @@ fn override_works_after_admin_pause_escrow_cycle() {
 
     // Lock must be released; override must proceed without EmergencyPauseInProgress.
     assert!(!read_pause_lock(&env, &client));
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     assert!(client.is_emergency_paused());
     assert!(!read_pause_lock(&env, &client));
 }
@@ -245,7 +187,7 @@ fn interleaved_sequence_produces_correct_final_state() {
     let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
-    client.emergency_pause_admin_override(&admin_addr, &true); // override → paused
+    client.emergency_pause_admin_override(&admin_addr); // override → paused
     assert!(client.is_emergency_paused());
 
     client.emergency_unpause(&admin_addr); // standard unpause
@@ -254,7 +196,7 @@ fn interleaved_sequence_produces_correct_final_state() {
     client.emergency_pause(&client_addr, &freelancer_addr); // standard pause
     assert!(client.is_emergency_paused());
 
-    client.emergency_pause_admin_override(&admin_addr, &false); // override → unpaused
+    client.emergency_unpause(&admin_addr); // standard unpause
     assert!(!client.is_emergency_paused());
 
     // Lock must be clean throughout.
@@ -270,24 +212,12 @@ fn success_emits_exactly_one_emoverrid_event_with_correct_payload() {
     let topic: Val = symbol_short!("emoverrid").into_val(&env);
 
     // Override to paused.
-    client.emergency_pause_admin_override(&admin_addr, &true);
+    client.emergency_pause_admin_override(&admin_addr);
     assert_eq!(event_count_for(&env, &topic), 1);
     let ev = last_override_event(&env);
     assert_eq!(ev.admin, admin_addr);
     assert_eq!(ev.contract_id, client.address);
     assert!(ev.paused);
-
-    // Override back to unpaused: the second call emits its own event.
-    //
-    // The count is 1 again rather than 2 -- crate::all_event_tuples(&env) reports the
-    // most recent contract invocation, not a running total across the test --
-    // so this asserts the second call emitted exactly one event, and the
-    // payload check below confirms it is the new one.
-    client.emergency_pause_admin_override(&admin_addr, &false);
-    assert_eq!(event_count_for(&env, &topic), 1);
-    let ev2 = last_override_event(&env);
-    assert_eq!(ev2.admin, admin_addr);
-    assert!(!ev2.paused);
 }
 
 #[test]
@@ -301,14 +231,11 @@ fn failed_calls_emit_no_emoverrid_event() {
 
     // Unauthorized caller.
     let attacker = Address::generate(&env);
-    let _ = client.try_emergency_pause_admin_override(&attacker, &true);
-
-    // No-op: unpaused → false.
-    let _ = client.try_emergency_pause_admin_override(&admin_addr, &false);
+    let _ = client.try_emergency_pause_admin_override(&attacker);
 
     // No-op: pause first, then try paused → true.
     client.emergency_pause(&client_addr, &freelancer_addr);
-    let _ = client.try_emergency_pause_admin_override(&admin_addr, &true);
+    let _ = client.try_emergency_pause_admin_override(&admin_addr);
 
     assert_eq!(
         event_count_for(&env, &topic),
@@ -326,6 +253,6 @@ fn not_initialized_returns_error() {
     let caller = Address::generate(&env);
 
     // Call without having initialized the contract with an admin key
-    let result = client.try_emergency_pause_admin_override(&caller, &true);
+    let result = client.try_emergency_pause_admin_override(&caller);
     assert_eq!(result, Err(Ok(Error::NotInitialized)));
 }
