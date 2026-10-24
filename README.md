@@ -40,6 +40,7 @@ The contract exposes **94 public functions** grouped by category below.
 | `add_milestone` | Client + Freelancer | Append a new Pending milestone to a funded job; the client deposits its amount in the same call (capped at `MAX_MILESTONES` = 50) |
 | `reduce_milestone` | Client + Freelancer | Lower a Pending milestone's amount and refund the difference to the client |
 | `rotate_freelancer` | Client + Freelancer | Move the freelancer role and future payouts to a new address |
+| `replace_arbiter` | Client + Freelancer | Appoint a new arbiter when the sitting one is unavailable; refused while a dispute is open |
 | `get_job` | Anyone | View current job state |
 | `get_milestone` | Anyone | View one milestone without loading the whole job |
 | `milestone_count` | Anyone | Number of milestones |
@@ -245,6 +246,11 @@ Events carry party addresses as extra topics for `getEvents` filtering; see
 | 48 | `WhitelistFull` | The whitelist already contains `MAX_WHITELIST_SIZE` (50) entries |
 | 49 | `WhitelistMinimum` | Removing a token would leave the whitelist empty (at least one token must remain) |
 | 50 | `TooManyParties` | A ratio vector exceeds the maximum allowed number of parties (255) |
+| 51 | `MigrationRequired` | Storage predates this code (after `upgrade`, before `migrate`); the admin must call `migrate` first |
+| 52 | `AlreadyMigrated` | `migrate` was called on storage already at `SCHEMA_VERSION` |
+| 53 | `MultiSigConfigPending` | `propose_multisig_config` was called while another signer-set change is pending |
+| 54 | `NoPendingMultiSigConfig` | `execute_multisig_config` / `cancel_multisig_config_proposal` found no pending signer-set change |
+| 55 | `DisputePending` | `replace_arbiter` was called while a milestone is `Disputed` |
 
 ## Milestone States
 
@@ -393,12 +399,12 @@ Upgrading is always two admin calls, in this order:
 The contract stores the layout version it was written with
 (`schema_version()`), and the code declares the version it expects
 (`SCHEMA_VERSION`). Between the two calls they differ, and every
-state-changing endpoint returns `MigrationRequired` (error 45), so nothing
+state-changing endpoint returns `MigrationRequired` (error 51), so nothing
 can write an entry in the old shape or act on one misread. Getters, `upgrade`
 itself and the pause/unpause controls keep working, so an incident in that
 window can still be contained. Once `migrate` succeeds (it emits `migrate`
 with a `MigratedEvent`) normal operation resumes. Calling `migrate` again
-returns `AlreadyMigrated` (error 46). Deployments created before the marker
+returns `AlreadyMigrated` (error 52). Deployments created before the marker
 existed are treated as schema 1.
 
 Schema 2 adds `spec_hash` to every stored `Milestone` (#767; old milestones

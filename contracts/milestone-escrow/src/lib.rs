@@ -225,6 +225,14 @@ pub enum Error {
     /// `execute_multisig_config` / `cancel_multisig_config_proposal` found no
     /// pending signer-set change.
     NoPendingMultiSigConfig = 54,
+    /// `replace_arbiter` was called while at least one milestone is in the
+    /// `Disputed` state.  The sitting arbiter is the party authorised to
+    /// conclude an open dispute (`resolve_dispute` /
+    /// `apply_dispute_arbitration_split` both verify the stored
+    /// `meta.arbiter`), so the client and freelancer may only jointly swap the
+    /// arbiter once every dispute has been resolved, split, or timed out and
+    /// escalated.
+    DisputePending = 55,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -1109,6 +1117,33 @@ pub struct UnacceptedWithdrawnEvent {
     pub amount: i128,
 }
 
+/// Emitted by `replace_arbiter` when the client and the freelancer jointly
+/// appoint a new arbiter (issue #731).
+///
+/// `old` is the arbiter recorded in `JobMeta` immediately before the call and
+/// `new` is the arbiter persisted by it.  From the next call onward every
+/// arbitration endpoint (`resolve_dispute`,
+/// `apply_dispute_arbitration_split`) authorises against `new`, because they
+/// compare their caller against the stored `JobMeta::arbiter` field that this
+/// call rewrites.  Emitted only on the success path — every rejection
+/// (`Paused` / `EscrowLocked` / `InvalidAddress` / `NotInitialized` /
+/// `InvalidParties` / `DisputePending`) returns before the publish, so a
+/// failed call publishes nothing.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterReplacedEvent {
+    /// The stored client that co-signed the replacement.
+    pub client: Address,
+    /// The stored freelancer that co-signed the replacement.
+    pub freelancer: Address,
+    /// Arbiter recorded in `JobMeta` before this call.
+    pub old: Address,
+    /// Arbiter persisted in `JobMeta` by this call.
+    pub new: Address,
+}
+
+/// Emitted by `cancel_escrow` once both the client and the freelancer have
+/// approved and the cancel lock fires.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelEscrowInitiatedEvent {
@@ -4323,6 +4358,101 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
         Self::record_acceptance(&env, arbiter, 2, symbol_short!("acceptarb"))
+    }
+
+    /// Appoint a new arbiter, jointly authorized by the client and the
+    /// freelancer (issue #731).
+    ///
+    /// Lets the two contracting parties swap an arbiter who has become
+    /// unavailable (unreachable, unresponsive, or unwilling to act) without
+    /// waiting on the arbiter's own signature or an admin override.  Both the
+    /// client's and the freelancer's `require_auth()` are collected up front
+    /// by `require_client_and_freelancer_consent`, mirroring
+    /// `set_interest_yield_consent` and `payment_streaming_consent`: a
+    /// transaction missing either signature panics at the host level before
+    /// any storage is mutated, so neither party can ever unilaterally replace
+    /// the arbiter.
+    ///
+    /// Distinct-parties validation mirrors `initialize` (issue #667): the new
+    /// arbiter must differ from the stored client, the stored freelancer, and
+    /// the currently recorded arbiter.  A replacement is also refused while
+    /// any milestone is still `Disputed` — the sitting arbiter is the party
+    /// authorised to conclude an open dispute (`resolve_dispute` and
+    /// `apply_dispute_arbitration_split` both verify the stored
+    /// `meta.arbiter`), so the swap may only happen once every dispute has
+    /// been resolved, split, or timed out and escalated.  There is no
+    /// escape hatch past this guard: this is the deliberate design, because a
+    /// silent mid-dispute arbiter swap would let the parties steer the
+    /// outcome.  Once the swap succeeds it is recorded in `JobMeta::arbiter`,
+    /// so the very next dispute raise, resolution, or arbitration split is
+    /// checked and settled against the new arbiter automatically — no
+    /// additional plumbing is needed.  On success the `arbchg` event reports
+    /// the `old` and `new` arbiter addresses for indexers.
+    ///
+    /// # Parameters
+    /// * `new_arbiter` – The incoming arbiter. Must be a valid address
+    ///                   distinct from every recorded party.
+    ///
+    /// # Errors
+    /// * `MigrationRequired`– Storage predates this code; call `migrate`.
+    /// * `Paused`           – The contract is emergency-paused or
+    ///                        cancel-locked.
+    /// * `InvalidAddress`   – `new_arbiter` is a zero address, the canonical
+    ///                        Soroban zero contract address, or the escrow's
+    ///                        own address.
+    /// * `NotInitialized`   – Contract has not been initialized.
+    /// * `InvalidParties`   – `new_arbiter` equals the stored client, the
+    ///                        stored freelancer, or the current arbiter.
+    /// * `DisputePending`   – At least one milestone is currently `Disputed`.
+    pub fn replace_arbiter(env: Env, new_arbiter: Address) -> Result<(), Error> {
+        Self::ensure_migrated(&env)?;
+        Self::ensure_not_paused(&env)?;
+
+        // ── Input validation: reject the zero sentinels and the escrow's own
+        // address before any authorization or ledger access. ────────────────
+        Self::validate_address(&env, &new_arbiter)?;
+
+        // ── Joint authorization: both the client's and the freelancer's
+        // `require_auth()` fire here, before any further check or write. ──
+        let mut meta = Self::require_client_and_freelancer_consent(&env)?;
+
+        // ── Distinct-parties validation (mirrors `initialize`, #667): the
+        // arbiter must stay independent of the client, the freelancer, and
+        // the arbiter being replaced. Re-proposing the sitting arbiter is a
+        // no-op that would still cost a full two-signature round and emit a
+        // misleading replacement event, so it is refused like a collision. ──
+        if new_arbiter == meta.client
+            || new_arbiter == meta.freelancer
+            || new_arbiter == meta.arbiter
+        {
+            return Err(Error::InvalidParties);
+        }
+
+        // ── Dispute-active guard: an arbiter cannot be swapped out from
+        // under an open dispute. Scanned before any write so a refused call
+        // leaves no ledger trace. ─────────────────────────────────────────
+        for index in 0..meta.milestone_count {
+            let milestone = Self::load_milestone(&env, index)?;
+            if milestone.status == MilestoneStatus::Disputed {
+                return Err(Error::DisputePending);
+            }
+        }
+
+        let old_arbiter = meta.arbiter.clone();
+        meta.arbiter = new_arbiter.clone();
+        Self::store_job_meta(&env, &meta);
+
+        env.events().publish(
+            (symbol_short!("arbchg"),),
+            ArbiterReplacedEvent {
+                client: meta.client.clone(),
+                freelancer: meta.freelancer.clone(),
+                old: old_arbiter,
+                new: new_arbiter,
+            },
+        );
+
+        Ok(())
     }
 
     /// Rotate the freelancer identity and payout destination (issue #732).
