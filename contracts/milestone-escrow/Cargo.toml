@@ -2,6 +2,9 @@
 name = "milestone-escrow"
 version = "0.1.0"
 edition = "2021"
+# Deployed as a Soroban contract, never published to crates.io (also lets
+# cargo-deny skip license checks for this workspace crate).
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -11,3 +14,4 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+proptest = "1.6"
