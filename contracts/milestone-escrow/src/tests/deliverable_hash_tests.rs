@@ -33,6 +33,14 @@ fn mark_delivered_with_hash_stores_hash_and_emits_event() {
     let hash = BytesN::from_array(&env, &[0xAB; 32]);
     client.mark_delivered_with_hash(&freelancer_addr, &1u32, &hash);
 
+    // Read the event before any further call: the test env keeps only the
+    // events of the most recent invocation.
+    let event = last_delivered_event(&env);
+    assert_eq!(event.deliverable, hash);
+    assert_eq!(event.milestone_index, 1);
+    assert_eq!(event.freelancer, freelancer_addr);
+    assert_eq!(event.client, client_addr);
+
     let job = client.get_job();
     let delivered = job.milestones.get(1).unwrap();
     assert_eq!(delivered.status, MilestoneStatus::Delivered);
@@ -42,12 +50,6 @@ fn mark_delivered_with_hash_stores_hash_and_emits_event() {
         job.milestones.get(0).unwrap().deliverable,
         BytesN::from_array(&env, &[0u8; 32])
     );
-
-    let event = last_delivered_event(&env);
-    assert_eq!(event.deliverable, hash);
-    assert_eq!(event.milestone_index, 1);
-    assert_eq!(event.freelancer, freelancer_addr);
-    assert_eq!(event.client, client_addr);
 }
 
 #[test]
@@ -59,10 +61,10 @@ fn legacy_mark_delivered_records_zero_hash() {
     client.mark_delivered(&freelancer_addr, &0u32);
 
     let zero = BytesN::from_array(&env, &[0u8; 32]);
+    assert_eq!(last_delivered_event(&env).deliverable, zero);
     let milestone = client.get_job().milestones.get(0).unwrap();
     assert_eq!(milestone.status, MilestoneStatus::Delivered);
     assert_eq!(milestone.deliverable, zero);
-    assert_eq!(last_delivered_event(&env).deliverable, zero);
 }
 
 #[test]
