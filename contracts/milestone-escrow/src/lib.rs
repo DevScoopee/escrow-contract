@@ -135,6 +135,10 @@ pub struct Milestone {
     pub released_amount: i128,
     pub status: MilestoneStatus,
     pub delivered_at: u64,
+    /// Hash of the delivered artifact (e.g. SHA-256 or IPFS CID digest).
+    /// All zeroes when not yet delivered or delivered via the legacy
+    /// `mark_delivered` path without a hash.
+    pub deliverable: BytesN<32>,
 }
 
 #[contracttype]
@@ -381,6 +385,7 @@ pub struct DeliveredEvent {
     pub delivered_at: u64,
     pub status: MilestoneStatus,
     pub amount: i128,
+    pub deliverable: BytesN<32>,
 }
 
 #[contracttype]
@@ -2068,6 +2073,7 @@ impl MilestoneEscrow {
                     released_amount: 0,
                     status: MilestoneStatus::Pending,
                     delivered_at: 0,
+                    deliverable: BytesN::from_array(&env, &[0u8; 32]),
                 },
             );
         }
@@ -2437,10 +2443,30 @@ impl MilestoneEscrow {
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidAmount`    – The milestone's amount is not positive.
     /// * `InvalidStatus`    – The milestone is not currently `Pending`.
+    ///
+    /// Legacy path kept for migration: records an all-zero `deliverable`
+    /// hash. Prefer `mark_delivered_with_hash`.
     pub fn mark_delivered(
         env: Env,
         freelancer: Address,
         milestone_index: u32,
+    ) -> Result<(), Error> {
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        Self::mark_delivered_with_hash(env, freelancer, milestone_index, zero_hash)
+    }
+
+    /// Marks a milestone as delivered and records a hash of the deliverable
+    /// (e.g. SHA-256 of the artifact or an IPFS CID digest) on-chain so an
+    /// arbiter can tie the delivery claim to a concrete artifact.
+    ///
+    /// Same parameters, behaviour and errors as `mark_delivered`, plus:
+    /// * `deliverable` – 32-byte hash of the delivered artifact. Stored on the
+    ///                   milestone and emitted in `DeliveredEvent`.
+    pub fn mark_delivered_with_hash(
+        env: Env,
+        freelancer: Address,
+        milestone_index: u32,
+        deliverable: BytesN<32>,
     ) -> Result<(), Error> {
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
@@ -2488,6 +2514,7 @@ impl MilestoneEscrow {
         let delivered_at = env.ledger().timestamp();
         milestone.status = MilestoneStatus::Delivered;
         milestone.delivered_at = delivered_at;
+        milestone.deliverable = deliverable.clone();
         Self::store_milestone(&env, milestone_index, &milestone);
         // Write the delivery timestamp to temporary storage so that
         // claim_auto_release and time_until_auto_release can read it from the
@@ -2504,6 +2531,7 @@ impl MilestoneEscrow {
                 delivered_at,
                 status: MilestoneStatus::Delivered,
                 amount: milestone.amount,
+                deliverable,
             },
         );
 

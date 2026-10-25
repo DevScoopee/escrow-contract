@@ -785,6 +785,7 @@ fn test_mark_delivered_invalid_amount_fails() {
         released_amount: 0,
         status: MilestoneStatus::Pending,
         delivered_at: 0,
+        deliverable: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
     };
     env.as_contract(&contract_id, || {
         env.storage()
@@ -3622,6 +3623,7 @@ fn test_multisig_admin_override_release_amount_overflow_returns_invalid_amount()
                 released_amount: i128::MIN,
                 status: MilestoneStatus::Pending,
                 delivered_at: 0,
+                deliverable: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
             },
         );
     });
@@ -3648,6 +3650,7 @@ fn test_multisig_admin_override_release_min_amount_returns_invalid_amount() {
                 released_amount: 0,
                 status: MilestoneStatus::Pending,
                 delivered_at: 0,
+                deliverable: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
             },
         );
     });
@@ -14291,4 +14294,90 @@ fn test_initialize_overflow_in_middle_of_list_returns_typed_error() {
             "no milestone must be persisted after a failed initialize"
         );
     });
+}
+
+// ---------------------------------------------------------------------------
+// Deliverable hash on mark_delivered
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mark_delivered_with_hash_stores_hash_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, _, _, _, contract_id, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128, 2_000_i128]);
+
+    let hash = soroban_sdk::BytesN::from_array(&env, &[0xAB; 32]);
+    client.mark_delivered_with_hash(&freelancer_addr, &1u32, &hash);
+
+    let job = client.get_job();
+    let m1 = job.milestones.get(1).unwrap();
+    assert_eq!(m1.status, MilestoneStatus::Delivered);
+    assert_eq!(m1.deliverable, hash);
+    // Untouched milestone keeps the zero hash.
+    assert_eq!(
+        job.milestones.get(0).unwrap().deliverable,
+        soroban_sdk::BytesN::from_array(&env, &[0u8; 32])
+    );
+
+    let events = crate::all_event_tuples(&env);
+    let last_event = events.last().unwrap();
+    let topic: Symbol = last_event.1.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, symbol_short!("deliver"));
+    let parsed = DeliveredEvent::from_val(&env, &last_event.2);
+    assert_eq!(parsed.deliverable, hash);
+    assert_eq!(parsed.milestone_index, 1);
+    assert_eq!(parsed.freelancer, freelancer_addr);
+    assert_eq!(parsed.client, client_addr);
+    assert_eq!(parsed.contract_id, contract_id);
+}
+
+#[test]
+fn test_mark_delivered_legacy_records_zero_hash() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, freelancer_addr, _, _, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    client.mark_delivered(&freelancer_addr, &0u32);
+
+    let zero = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    let m0 = client.get_job().milestones.get(0).unwrap();
+    assert_eq!(m0.status, MilestoneStatus::Delivered);
+    assert_eq!(m0.deliverable, zero);
+
+    let events = crate::all_event_tuples(&env);
+    let parsed = DeliveredEvent::from_val(&env, &events.last().unwrap().2);
+    assert_eq!(parsed.deliverable, zero);
+}
+
+#[test]
+fn test_mark_delivered_with_hash_rejects_non_pending() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, freelancer_addr, _, _, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    let first = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    let second = soroban_sdk::BytesN::from_array(&env, &[2u8; 32]);
+    client.mark_delivered_with_hash(&freelancer_addr, &0u32, &first);
+
+    // A second delivery cannot overwrite the recorded hash.
+    let result = client.try_mark_delivered_with_hash(&freelancer_addr, &0u32, &second);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(
+        client.get_job().milestones.get(0).unwrap().deliverable,
+        first
+    );
+}
+
+#[test]
+fn test_mark_delivered_with_hash_rejects_non_freelancer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, _, _, _, _, _, client) = setup_funded_escrow(&env, vec![&env, 1_000_i128]);
+
+    let hash = soroban_sdk::BytesN::from_array(&env, &[3u8; 32]);
+    let result = client.try_mark_delivered_with_hash(&client_addr, &0u32, &hash);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }

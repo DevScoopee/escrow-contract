@@ -161,12 +161,13 @@ fn set_milestone_raw(env: &Env, contract_id: &Address, index: u32, milestone: &M
     });
 }
 
-fn unlocked_milestone(amount: i128, released_amount: i128) -> Milestone {
+fn unlocked_milestone(env: &Env, amount: i128, released_amount: i128) -> Milestone {
     Milestone {
         amount,
         released_amount,
         status: MilestoneStatus::Pending,
         delivered_at: 0,
+        deliverable: soroban_sdk::BytesN::from_array(env, &[0u8; 32]),
     }
 }
 
@@ -182,7 +183,7 @@ fn refund_negative_amount_returns_invalid_amount_without_panic() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     client.multisig_lock(&admin_addr);
 
-    let milestone = unlocked_milestone(i128::MIN, 0);
+    let milestone = unlocked_milestone(&env, i128::MIN, 0);
     set_milestone_raw(&env, &contract_id, 0, &milestone);
 
     let result = client.try_multisig_admin_override_refund(&admin_addr, &0u32);
@@ -204,7 +205,7 @@ fn refund_negative_released_amount_returns_invalid_amount_without_panic() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     client.multisig_lock(&admin_addr);
 
-    let milestone = unlocked_milestone(i128::MAX, i128::MIN);
+    let milestone = unlocked_milestone(&env, i128::MAX, i128::MIN);
     set_milestone_raw(&env, &contract_id, 0, &milestone);
 
     let result = client.try_multisig_admin_override_refund(&admin_addr, &0u32);
@@ -226,7 +227,7 @@ fn refund_released_exceeds_amount_returns_invalid_amount_without_panic() {
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
     client.multisig_lock(&admin_addr);
 
-    let milestone = unlocked_milestone(i128::MAX, i128::MAX);
+    let milestone = unlocked_milestone(&env, i128::MAX, i128::MAX);
     set_milestone_raw(&env, &contract_id, 0, &milestone);
 
     // released_amount == amount → remaining == 0 → InvalidAmount.
@@ -235,7 +236,7 @@ fn refund_released_exceeds_amount_returns_invalid_amount_without_panic() {
     assert!(client.is_multisig_locked());
 
     // released_amount > amount → remaining < 0 → InvalidAmount (no wrap).
-    let milestone2 = unlocked_milestone(100, 200);
+    let milestone2 = unlocked_milestone(&env, 100, 200);
     set_milestone_raw(&env, &contract_id, 0, &milestone2);
     let result = client.try_multisig_admin_override_refund(&admin_addr, &0u32);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -257,7 +258,7 @@ fn refund_valid_amount_equals_amount_minus_released_amount() {
 
     // Inject an already partially-released milestone (released 400 of 1000).
     // Remaining refund == 1000 - 400 == 600.
-    let milestone = unlocked_milestone(1_000, 400);
+    let milestone = unlocked_milestone(&env, 1_000, 400);
     set_milestone_raw(&env, &contract_id, 0, &milestone);
 
     let token = token::Client::new(&env, &token_id);
